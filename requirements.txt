@@ -16,3 +16,4 @@ psycopg2-binary
 supabase
 pytest
 prometheus-client
+dvc-s3
