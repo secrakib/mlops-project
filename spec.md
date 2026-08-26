@@ -99,7 +99,7 @@ credit-risk-scoring/
 ├── app/streamlit_app.py
 ├── config/{training_config.yaml, serving_config.yaml}
 ├── tests/{test_features.py, test_api_contract.py, test_model_sanity.py}
-├── data/raw_applicants.csv.dvc      # pointer only, not raw data
+├── data/dataset.csv.dvc      # pointer only, not raw data
 ├── Dockerfile
 ├── docker-compose.yml               # local Postgres (prediction_logs only) + API + Streamlit
 ├── dvc.yaml
