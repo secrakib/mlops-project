@@ -117,7 +117,7 @@ credit-risk-scoring/
 - **Target:** `loan_status` collapsed to binary — Fully Paid (0) vs. Charged Off (1). Drop pending outcomes.
 - **Split Strategy:** Temporal (using `issue_d`), not random, to prevent future information leakage.
 - **Leakage Removal:** Explicitly drop `total_pymnt`, `recoveries`, `last_pymnt_amnt`, `collection_recovery_fee`. Document this as a leakage check in the README.
-- **Data Tracking (DVC):** Raw applicant data, engineered features, and training baseline statistics are tracked via DVC (DagsHub remote). No Postgres for training data. "New data" event = `dvc push` + `git commit` of `.dvc` file.
+- **Data Tracking (DVC):**  dataset is tracked via DVC (DagsHub s3 bucket remote). No Postgres for training data. "New data" event = `dvc push` + `git commit` of `.dvc` file.
 
 ### 3.2 Modeling & Evaluation
 
