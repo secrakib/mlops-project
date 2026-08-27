@@ -1,9 +1,10 @@
 data:
   path: "data/dataset.csv"
   target_col: "loan_status"
-  split_dates:
-    val_start: "2017-05-01"
-    test_start: "2017-11-01"
+  split_ratios:
+    train: 0.7
+    val: 0.15
+    test: 0.15
 
 features:
   leakage_cols: 
@@ -11,12 +12,18 @@ features:
     - "recoveries"
     - "last_pymnt_amnt"
     - "collection_recovery_fee"
+    - "total_pymnt_inv"
+    - "total_rec_prncp"
+    - "total_rec_int"
+    - "total_rec_late_fee"
+    - "last_fico_range_high"
+    - "last_fico_range_low"
 
 model:
   xgboost_grid:
     max_depth: [3, 5]
     learning_rate: [0.01, 0.1]
-    n_estimators: [100]
+    n_estimators: [100,200]
 
 evaluation:
   cost_matrix:

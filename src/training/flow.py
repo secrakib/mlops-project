@@ -28,8 +28,8 @@ def load_and_split_data(config):
     df = fp.load_data(config['data']['path'])
     df_train_raw, df_val_raw, df_test_raw = fp.temporal_split(
         df, 
-        config['data']['split_dates']['val_start'],
-        config['data']['split_dates']['test_start']
+        val_ratio=config['data']['split_ratios']['val'],
+        test_ratio=config['data']['split_ratios']['test']
     )
     return df_train_raw, df_val_raw, df_test_raw
 
@@ -154,7 +154,7 @@ def run_training_pipeline(config_path: str = "config/training_config.yaml"):
     
     print("Waiting for MLflow artifact upload to complete...")
     import time
-    time.sleep(10)
+    time.sleep(30)
     compare_and_promote(run_id, test_cost)
 
 if __name__ == "__main__":
