@@ -1,5 +1,7 @@
-pandas
+pandas<3
 scikit-learn
+scipy
+python-dotenv
 xgboost
 shap
 dvc
@@ -17,3 +19,5 @@ supabase
 pytest
 prometheus-client
 dvc-s3
+protobuf
+python-dateutil
