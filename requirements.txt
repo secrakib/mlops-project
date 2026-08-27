@@ -7,10 +7,9 @@ shap
 dvc
 dagshub
 mlflow
-prefect
 fastapi
 uvicorn
-pydantic
+pydantic<2.9
 pydantic-settings
 streamlit
 python-json-logger
@@ -21,3 +20,5 @@ prometheus-client
 dvc-s3
 protobuf
 python-dateutil
+prefect<3
+anyio<4
