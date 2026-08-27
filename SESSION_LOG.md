@@ -2,6 +2,7 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-08-27 | 21:50 | Resolve Local Prefect DB Corruptions; Eliminate Target Leakage; Refactor Temporal Split to Ratios | ✅✅✅ | [#2026-08-27-2150](#2026-08-27-2150-session-summary) |
 | 2026-08-27 | 15:07 | Verify Status and Update Spec Remote | ✅ | [#2026-08-27-1507](#2026-08-27-1507-session-summary) |
 | 2026-08-27 | 15:05 | Create Base Dataset; Configure Git Ignore and Push | ✅✅ | [#2026-08-27-1505](#2026-08-27-1505-session-summary) |
 
@@ -109,5 +110,89 @@ None at this time. The data pipeline foundation is set and tracked.
 
 ### Open Threads / Next Steps
 None at this time. The documentation is up to date and synced.
+
+---
+
+### <a name="2026-08-27-2150-session-summary"></a>[2026-08-27 21:50] Session Summary
+
+**Duration:** ~45 minutes
+**Overview:** This session focused on fixing local Prefect orchestration errors and deeply analyzing the dataset to remove severe target leakage that was artificially inflating model performance to 0.9999 AUC-PR. We also improved the data splitting logic to be dynamic and pushed the refined pipeline to GitHub.
+
+**Goals:** 3 total — 3 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Resolve Local Prefect DB Corruptions
+
+**Status:** ✅ Done
+
+**Context:** The user was blocked from running the training pipeline locally (`python src/training/flow.py`) because Prefect kept crashing during initialization with an Alembic migration error (`Can't locate revision identified by 'f416ea180ae1'`). Later, after a pipeline run, another error popped up (`UNIQUE constraint failed`).
+
+**Approach / Plan:** Both errors were caused by the local SQLite tracking database for Prefect (`~/.prefect/prefect.db`) being corrupted or out-of-sync due to version downgrading (Prefect 3 back to Prefect 2) and Windows concurrency quirks. Since this DB is purely for local metadata and not the remote MLflow tracking, the simple fix is to physically delete it.
+
+**Work Done:**
+- Attempted `prefect server database reset -y` but it failed.
+- Instructed the user to run `Remove-Item -Force ~/.prefect/prefect.db`.
+- The user successfully deleted the database, allowing the pipeline to execute smoothly.
+
+**Errors & Issues:**
+- `alembic.util.exc.CommandError: Can't locate revision identified by 'f416ea180ae1'`: Prefect 2 trying to read a Prefect 3 schema. Fixed by deleting DB.
+- `sqlite3.IntegrityError: UNIQUE constraint failed`: Known Prefect `aiosqlite` concurrency bug on Windows. Fixed by deleting DB.
+
+**Files Touched:**
+- None.
+
+**Outcome:** The orchestration layer was successfully stabilized for local development.
+
+### Goal 2: Eliminate Target Leakage
+
+**Status:** ✅ Done
+
+**Context:** The user noticed both Logistic Regression and XGBoost were achieving impossibly high `0.9999` AUC-PR scores, with Logistic Regression barely winning out. The user asked for a deep dive to analyze the dataset and fix this.
+
+**Approach / Plan:** Suspecting target leakage (future columns predicting the outcome), I wrote a scratch Python script to compute the Pearson correlation between all numeric columns and the `loan_status` target. I identified several post-origination columns with huge correlations. We needed to add these to the `leakage_cols` list in the config to drop them during feature engineering.
+
+**Work Done:**
+- Created and executed `scratch/find_leakage.py` to identify highly correlated features.
+- Found `last_fico_range_high` (0.76), `last_fico_range_low` (0.63), `total_rec_prncp` (0.47), and several other payment tracking columns acting as target leaks.
+- Updated `training_config.yaml` to explicitly drop these columns.
+- Reran the pipeline and confirmed that AUC-PR dropped to a realistic `~0.43`, with XGBoost properly outperforming Logistic Regression.
+
+**Errors & Issues:**
+- Models initially tied near 1.0 AUC-PR due to leakage. Fixed by explicitly removing future data.
+
+**Files Touched:**
+- `config/training_config.yaml` — Expanded the `leakage_cols` list.
+
+**Outcome:** The models are now learning genuine credit risk patterns rather than cheating by reading future payment values.
+
+### Goal 3: Refactor Temporal Split to Ratios
+
+**Status:** ✅ Done
+
+**Context:** The dataset was previously split into train/val/test using hardcoded dates (`val_start: 2017-05-01`, etc.). The user correctly suggested that it would be more robust to sort the data chronologically and split it using percentage ratios.
+
+**Approach / Plan:** We refactored `feature_pipeline.py` to sort the dataframe by `issue_d` in ascending order, calculate index boundaries based on user-defined ratios, and slice the dataframe accordingly.
+
+**Work Done:**
+- Modified `temporal_split` in `feature_pipeline.py` to use `val_ratio` and `test_ratio`.
+- Replaced `split_dates` with `split_ratios` (0.7, 0.15, 0.15) in `training_config.yaml`.
+- Updated `flow.py` to pass the ratio configuration to the splitting function.
+- Successfully pushed all changes to GitHub using `git add`, `commit`, and `push`.
+
+**Errors & Issues:**
+- None.
+
+**Files Touched:**
+- `config/training_config.yaml` — Migrated to `split_ratios`.
+- `src/features/feature_pipeline.py` — Implemented ratio-based slicing logic after chronological sorting.
+- `src/training/flow.py` — Updated the function call arguments.
+
+**Outcome:** The data splitting mechanism is now dynamic, preserving Out-Of-Time validation while being adaptable to new datasets. All code is tracked on GitHub.
+
+---
+
+### Open Threads / Next Steps
+None at this time. The model is realistically evaluated, XGBoost is winning, and the pipeline is solid.
 
 ---
