@@ -126,7 +126,25 @@ None at this time. The documentation is up to date and synced.
 
 **Status:** ✅ Done
 
-**Context:** The user was blocked from running the training pipeline locally (`python src/training/flow.py`) because Prefect kept crashing during initialization with an Alembic migration error (`Can't locate revision identified by 'f416ea180ae1'`). Later, after a pipeline run, another error popped up (`UNIQUE constraint failed`).
+**Context:** The user was blocked from running the training pipeline locally because Prefect kept crashing during initialization with an Alembic migration error (`Can't locate revision identified by 'f416ea180ae1'`). Later, after a pipeline run, another error popped up (`UNIQUE constraint failed`).
+
+> **Pipeline Execution Notes (Windows / PowerShell):**
+> 
+> **Option 1: Running directly as a script**
+> ```powershell
+> $env:PYTHONPATH="."
+> $env:PYTHONIOENCODING="utf-8"
+> python src/training/flow.py
+> ```
+> - `$env:PYTHONPATH="."`: Adds the repository root to `sys.path` so imports like `from src.features.feature_pipeline import ...` resolve without `ModuleNotFoundError`.
+> - `$env:PYTHONIOENCODING="utf-8"`: Prevents Windows PowerShell `UnicodeEncodeError` crashes when Prefect and MLflow log Unicode emojis/characters (e.g., 🏃, 🧪).
+> 
+> **Option 2: Running as a module (Recommended)**
+> ```powershell
+> $env:PYTHONIOENCODING="utf-8"
+> python -m src.training.flow
+> ```
+> - Running with `python -m src.training.flow` automatically adds the current working directory to `sys.path`, eliminating the need to set `$env:PYTHONPATH="."` manually.
 
 **Approach / Plan:** Both errors were caused by the local SQLite tracking database for Prefect (`~/.prefect/prefect.db`) being corrupted or out-of-sync due to version downgrading (Prefect 3 back to Prefect 2) and Windows concurrency quirks. Since this DB is purely for local metadata and not the remote MLflow tracking, the simple fix is to physically delete it.
 

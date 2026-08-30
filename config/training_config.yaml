@@ -23,7 +23,7 @@ model:
   xgboost_grid:
     max_depth: [3, 5]
     learning_rate: [0.01, 0.1]
-    n_estimators: [100,200]
+    n_estimators: [100,200] 
 
 evaluation:
   cost_matrix:
