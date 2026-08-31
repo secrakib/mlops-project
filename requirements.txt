@@ -23,3 +23,5 @@ python-dateutil
 prefect<3
 anyio<4
 pandera
+prometheus-fastapi-instrumentator
+httpx
