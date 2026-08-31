@@ -2,6 +2,7 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-08-31 | 20:48 | Implement Online Serving Layer (Part 4); Fix Artifact Loading | ✅✅✅✅ | [#2026-08-31-2048](#2026-08-31-2048-session-summary) |
 | 2026-08-31 | 20:37 | Verify Final Pipeline Execution; Clarify Architecture Choices | ✅✅ | [#2026-08-31-2037](#2026-08-31-2037-session-summary) |
 | 2026-08-31 | 20:14 | Refactor Offline ML Pipeline; Fix Prefect & Sklearn issues | ✅ | [#2026-08-31-2014](#2026-08-31-2014-session-summary) |
 | 2026-08-27 | 21:50 | Resolve Local Prefect DB Corruptions; Eliminate Target Leakage; Refactor Temporal Split to Ratios | ✅✅✅ | [#2026-08-27-2150](#2026-08-27-2150-session-summary) |
@@ -326,5 +327,135 @@ Begin implementation of the Online Serving Layer (FastAPI).
 
 ### Open Threads / Next Steps
 Begin implementation of the Online Serving Layer (FastAPI) as documented in the new implementation plan.
+
+---
+
+### <a name="2026-08-31-2048-session-summary"></a>[2026-08-31 20:48] Session Summary
+
+**Duration:** ~2.5 hours
+**Overview:** This major session was dedicated to implementing the complete "Online Serving API" (Part 4 of the spec). We transitioned from offline modeling to a live scoring endpoint. Work included designing the API architecture, verifying external database connectivity (Supabase), building out the FastAPI application with custom correlation middleware, and robustly integrating the MLflow model and SHAP explainer into the FastAPI lifespan. We encountered and resolved significant artifact loading issues (pickle vs joblib, and NumPy vs DataFrame formats) to achieve a stable, production-ready server.
+
+**Goals:** 4 total — 4 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Plan Online Serving & Verify Database
+
+**Status:** ✅ Done
+
+**Context:** The user requested an implementation plan for Part 4 (Online Serving API) based on `spec.md`, explicitly asking to identify required `.env` variables, gap-analyze the spec, and ensure we learn from previous errors. Additionally, the user wanted to verify the Supabase PostgreSQL connection before proceeding.
+
+**Approach / Plan:** 
+I reviewed `spec.md` and created an `implementation_plan.md` that detailed the configuration, middleware, schemas, and main FastAPI app. I identified that `DAGSHUB_USER_TOKEN`, `MLFLOW_TRACKING_URI`, and `DATABASE_URL` were needed. The user provided a Supabase URL, and we wrote a scratch script to hit the database to confirm it was healthy.
+
+**Work Done:**
+- Created the comprehensive `implementation_plan.md` for Part 4.
+- Wrote and executed `scratch/test_db.py` to test the Supabase connection string.
+- Addressed user feedback to ensure the API receives allowed origins and model aliases dynamically from the environment.
+
+**Problems Faced & Solutions:** No significant problems were encountered during planning.
+
+**Files Touched:**
+- `implementation_plan.md` — Documented the full Part 4 architecture.
+- `scratch/test_db.py` — Verified Supabase connectivity.
+
+**Outcome:** We achieved alignment on the API architecture and confirmed that our external logging database was reachable.
+
+---
+
+### Goal 2: Implement FastAPI App & Middleware
+
+**Status:** ✅ Done
+
+**Context:** With the plan approved, we needed to write the actual code for the serving layer, ensuring strong typing, observability, and adherence to the trained model's feature schema.
+
+**Approach / Plan:** 
+We built the app layer-by-layer: first configuration, then dynamic schemas (reading exactly what the model expects from `training_config.yaml`), then request ID middleware (for tracing), and finally the `main.py` router containing the `/score`, `/health`, and `/metrics` endpoints.
+
+**Work Done:**
+- Created `config/serving_config.yaml` and `src/serving/config.py` for environment parsing.
+- Created `src/serving/schemas.py` using Pydantic's `create_model` to enforce the 77-feature numeric schema dynamically.
+- Created `src/serving/middleware.py` utilizing `contextvars` to generate and inject a unique `X-Request-ID`.
+- Authored `src/serving/main.py` implementing the FastAPI application, Prometheus metrics, and the model prediction logic.
+
+**Problems Faced & Solutions:** No significant problems were encountered.
+
+**Files Touched:**
+- `config/serving_config.yaml`, `src/serving/config.py`, `src/serving/schemas.py`, `src/serving/middleware.py`, `src/serving/main.py` — Created the core serving application.
+- `requirements.txt` — Added `fastapi`, `uvicorn`, `prometheus-fastapi-instrumentator`, and `httpx`.
+
+**Outcome:** The FastAPI application was fully constructed and ready for startup testing.
+
+---
+
+### Goal 3: Fix Artifact Loading Issues
+
+**Status:** ✅ Done
+
+**Context:** When attempting to boot the FastAPI server locally using `uvicorn`, the application crashed during the `lifespan` startup phase while attempting to download and load the MLflow model and SHAP artifacts.
+
+**Approach / Plan:** 
+We had to debug two sequential startup crashes related to how the training pipeline saved artifacts versus how the serving pipeline loaded them.
+
+**Work Done:**
+- Replaced `pickle.load()` with `joblib.load()` in `main.py`.
+- Updated `src/training/flow.py` to use `shap.sample(X_train, 100)` instead of `shap.kmeans` on preprocessed data.
+- Ran `$env:PYTHONIOENCODING="utf-8"; python -m src.training.flow` to register the new model version (v9) to `Staging`.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — UnpicklingError**
+- **Problem:** Uvicorn crashed with `_pickle.UnpicklingError` when loading `shap_background.pkl`.
+- **Diagnosis:** The artifact was saved in `flow.py` using `joblib.dump()`, but `main.py` was attempting to load it using the standard `pickle.load()` module.
+- **Solution:** Modified `src/serving/main.py` to import and use `joblib.load()`.
+- **Result:** The server successfully loaded the file, moving us to the next error.
+- **Root Cause / Lesson:** Symmetric serialization libraries must be used across the training and serving boundaries.
+
+**Problem 2 — SHAP Explainer Initialization Crash**
+- **Problem:** Uvicorn crashed with `Failed to load SHAP artifact: Specifying the columns using strings is only supported for dataframes.`
+- **Diagnosis:** The MLflow model (a scikit-learn Pipeline) expects a raw Pandas DataFrame with string columns, but the background dataset was saved as a NumPy array.
+- **Solution:** Modified `flow.py` to save a random sample of the raw Pandas DataFrame (`shap.sample(X_train, 100)`).
+- **Result:** FastAPI `KernelExplainer` successfully loaded the artifact and calculated SHAP values mapped precisely to raw inputs.
+- **Root Cause / Lesson:** When using SHAP `KernelExplainer` with a full sklearn Pipeline that relies on Pandas DataFrames, the background dataset must also be a Pandas DataFrame to preserve column names.
+
+**Problem 3 — Missing Unicode Encodings in Plan**
+- **Problem:** The implementation plan to fix the SHAP issue omitted `$env:PYTHONIOENCODING="utf-8"`, which would have caused Windows PowerShell to crash when MLflow printed emojis.
+- **Diagnosis:** The user reviewed the plan and referred to `SESSION_LOG.md` to flag the missing encoding setting.
+- **Solution:** Rewrote the implementation plan to prepend `$env:PYTHONIOENCODING="utf-8"` before all execution commands.
+- **Result:** All scripts executed cleanly without `UnicodeEncodeError`.
+- **Root Cause / Lesson:** Always apply the Unicode encoding fix on Windows when running MLflow scripts.
+
+**Files Touched:**
+- `src/serving/main.py` — Switched to `joblib`.
+- `src/training/flow.py` — Updated SHAP background to raw DataFrame.
+
+**Outcome:** The FastAPI server successfully completes its lifespan startup routine and connects to MLflow.
+
+---
+
+### Goal 4: Verify API Contract
+
+**Status:** ✅ Done
+
+**Context:** With the server theoretically stable, we needed mathematical proof that the endpoints satisfy the contract established in `spec.md`.
+
+**Approach / Plan:** 
+Write a suite of `pytest` automated tests that utilize FastAPI's `TestClient` to hit the `/health` and `/score` endpoints, verifying response structures and HTTP codes.
+
+**Work Done:**
+- Authored `tests/test_api_contract.py`.
+- Executed `$env:PYTHONIOENCODING="utf-8"; pytest tests/test_api_contract.py`.
+
+**Problems Faced & Solutions:** No significant problems were encountered. The tests passed (`4 passed`) on the first run after the SHAP fix was applied.
+
+**Files Touched:**
+- `tests/test_api_contract.py` — Created test suite.
+
+**Outcome:** We confirmed the `/score` endpoint correctly returns a probability, decision, request ID, and properly mapped `shap_values`. The Online Serving Layer is fully operational locally.
+
+---
+
+### Open Threads / Next Steps
+The Online Serving API is complete. The next logical step according to `spec.md` is to implement the monitoring and prediction logging pipelines (Part 5) to write live traffic to the Supabase database.
 
 ---
