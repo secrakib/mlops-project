@@ -127,12 +127,8 @@ def train_and_evaluate(df_train, df_val, df_test, config):
         import joblib
         
         print("Generating SHAP background dataset...")
-        X_train_preprocessed = best_model.named_steps['preprocessor'].transform(X_train)
-        # Handle sparse matrices returned by preprocessor if any, though ours should be dense
-        if hasattr(X_train_preprocessed, "toarray"):
-            X_train_preprocessed = X_train_preprocessed.toarray()
-            
-        background = shap.kmeans(X_train_preprocessed, 100)
+        # Use a random sample of the original data as background to explain the whole pipeline
+        background = shap.sample(X_train, 100)
         
         bg_path = "shap_background.pkl"
         joblib.dump(background, bg_path)

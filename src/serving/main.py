@@ -19,12 +19,13 @@ mlflow_model = None
 shap_explainer = None
 cost_matrix = None
 serving_cfg = None
+training_cfg = None
 
 logger = setup_prediction_logger(db_url=settings.DATABASE_URL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mlflow_model, shap_explainer, cost_matrix, serving_cfg
+    global mlflow_model, shap_explainer, cost_matrix, serving_cfg, training_cfg
     
     logger.info("Initializing Supabase Database schema...")
     init_db(settings.DATABASE_URL)
@@ -55,11 +56,19 @@ async def lifespan(app: FastAPI):
         shap_bg_path = client.download_artifacts(run_id, "shap_background.pkl")
         shap_background = joblib.load(shap_bg_path)
             
-        # We initialize KernelExplainer because mlflow_model is a sklearn Pipeline.
-        # This will be slow for many instances, but is acceptable for a single inference call.
-        # TreeExplainer requires just the tree, not the pipeline.
+        # We need to wrap the prediction function to reconstruct the DataFrame,
+        # because KernelExplainer converts the DataFrame into a numpy array,
+        # and the sklearn pipeline expects a DataFrame with column names.
         logger.info("Initializing SHAP KernelExplainer...")
-        shap_explainer = shap.KernelExplainer(mlflow_model.predict_proba, shap_background)
+        
+        # Define prediction wrapper
+        def predict_fn(X):
+            import pandas as pd
+            cols = training_cfg['features']['selected_numeric_features']
+            df_x = pd.DataFrame(X, columns=cols)
+            return mlflow_model.predict_proba(df_x)
+            
+        shap_explainer = shap.KernelExplainer(predict_fn, shap_background)
     except Exception as e:
         logger.error(f"Failed to load SHAP artifact: {e}")
         shap_explainer = None # We will just return empty dict if this fails
@@ -117,10 +126,15 @@ def score(request: ScoreRequest):
         # For KernelExplainer, shap_values returns a list of arrays (one for each class)
         # We take index 1 (default class). 
         # shap_values[1] shape: (1, n_features)
+        import numpy as np
         shap_vals = shap_explainer.shap_values(df, silent=True)
         # Handle depending on shap version / model output
         class_1_shap = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
-        feat_shap_dict = dict(zip(df.columns, [float(x) for x in class_1_shap]))
+        class_1_shap = np.array(class_1_shap).flatten()
+        
+        # Zip with original features from config, as df might have different order
+        cols = training_cfg['features']['selected_numeric_features']
+        feat_shap_dict = dict(zip(cols, [float(x) for x in class_1_shap]))
         
     # 5. Central Logging (stdout + Supabase Postgres)
     log_payload = {
