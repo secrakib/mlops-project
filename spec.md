@@ -115,22 +115,24 @@ credit-risk-scoring/
 
 - **Source:** LendingClub Loan Data (Kaggle), filtered to 2016–2018 issuance (~500K rows).
 - **Target:** `loan_status` collapsed to binary — Fully Paid (0) vs. Charged Off (1). Drop pending outcomes.
-- **Split Strategy:** Temporal (using `issue_d`), not random, to prevent future information leakage.
-- **Leakage Removal:** Explicitly drop `total_pymnt`, `recoveries`, `last_pymnt_amnt`, `collection_recovery_fee`. Document this as a leakage check in the README.
-- **Data Tracking (DVC):**  dataset is tracked via DVC (DagsHub s3 bucket remote). No Postgres for training data. "New data" event = `dvc push` + `git commit` of `.dvc` file.
+- **Split Strategy:** Temporal (using `issue_d`), not random, to prevent future information leakage. Ratios: Train (0.7), Validation (0.15), Test (0.15).
+- **Validation:** Strict `pandera` data quality validation on raw data to catch missing or corrupt columns early.
+- **Leakage Removal:** Explicitly drop `total_pymnt`, `recoveries`, `last_pymnt_amnt`, `collection_recovery_fee`, `total_pymnt_inv`, `total_rec_prncp`, `total_rec_int`, `total_rec_late_fee`, `last_fico_range_high`, `last_fico_range_low`.
+- **Data Tracking (DVC):** dataset is tracked via DVC (DagsHub s3 bucket remote). No Postgres for training data. "New data" event = `dvc push` + `git commit` of `.dvc` file.
 
 ### 3.2 Modeling & Evaluation
 
-- **Baseline:** Logistic Regression (`class_weight='balanced'`).
-- **Challenger:** XGBoost (small manual grid: depth, learning rate, n_estimators).
-- **Calibration:** `CalibratedClassifierCV` (Platt or isotonic) applied to the winning model.
+- **Baseline:** Logistic Regression (`class_weight='balanced'`), bundled in a `sklearn.pipeline.Pipeline` with `SimpleImputer` and `StandardScaler`.
+- **Challenger:** XGBoost (small manual grid: depth, learning rate, n_estimators), also bundled in a `sklearn.pipeline.Pipeline` to prevent training-serving skew.
+- **Calibration:** `CalibratedClassifierCV` (isotonic, `cv='prefit'`) applied to the winning pipeline.
 - **Decision Threshold:** Swept against a cost matrix (FN cost ≫ FP cost) stored in config. Pick the threshold minimizing expected cost.
-- **MLflow Tracking:** One experiment (`credit-risk-scoring`), one run per training invocation. Log AUC-PR, KS statistic, expected cost, calibration curve plot.
+- **Explainability:** Compute a representative SHAP background dataset offline (e.g., via `shap.kmeans`) and log it as an MLflow artifact to enable sub-50ms online serving.
+- **MLflow Tracking:** One experiment (`credit-risk-scoring`), one run per training invocation. Log AUC-PR, KS statistic, expected cost, calibration curve plot, model pipeline, and SHAP artifact.
 - **Model Registry:** Register the winning run using aliases (`Staging`, `Production`). Promotion is conditional on beating current Production expected cost.
 
 ### 3.3 Training Orchestration (Prefect)
 
-- **Tasks:** `load_data` → `build_features` → `train_lr` / `train_xgboost` (parallel) → `evaluate` → `compare_to_production` → `register_and_promote`.
+- **Tasks:** `load_data` → `validate_data` → `split_data` → `build_features` → `train_and_evaluate` → `compare_to_production` → `register_and_promote`.
 - **Execution:** Runs entirely inside GitHub Actions, not a standalone worker. Retries/caching at task level; UI visibility maintained via Prefect Cloud.
 
 ---

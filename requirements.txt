@@ -22,3 +22,4 @@ protobuf
 python-dateutil
 prefect<3
 anyio<4
+pandera

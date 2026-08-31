@@ -24,8 +24,16 @@ def setup_mlflow():
     mlflow.set_experiment("credit-risk-scoring")
 
 @task
-def load_and_split_data(config):
-    df = fp.load_data(config['data']['path'])
+def load_data_task(config):
+    return fp.load_data(config['data']['path'])
+
+@task
+def validate_data_task(df, config):
+    schema = fp.get_pandera_schema(config, is_inference=False)
+    return schema.validate(df)
+
+@task
+def split_data_task(df, config):
     df_train_raw, df_val_raw, df_test_raw = fp.temporal_split(
         df, 
         val_ratio=config['data']['split_ratios']['val'],
@@ -35,12 +43,9 @@ def load_and_split_data(config):
 
 @task
 def build_features_task(df_train_raw, df_val_raw, df_test_raw, config):
-    leakage_cols = config['features'].get('leakage_cols', [])
-    target_col = config['data']['target_col']
-    
-    df_train = fp.build_features(df_train_raw, target_col, leakage_cols)
-    df_val = fp.build_features(df_val_raw, target_col, leakage_cols)
-    df_test = fp.build_features(df_test_raw, target_col, leakage_cols)
+    df_train = fp.build_features(df_train_raw, config)
+    df_val = fp.build_features(df_val_raw, config)
+    df_test = fp.build_features(df_test_raw, config)
     return df_train, df_val, df_test
 
 @task
@@ -56,15 +61,19 @@ def train_and_evaluate(df_train, df_val, df_test, config):
     
     cost_matrix = config['evaluation']['cost_matrix']
     
+    # Create preprocessor
+    numeric_features = config['features']['selected_numeric_features']
+    preprocessor = fp.create_preprocessor(numeric_features)
+    
     with mlflow.start_run() as run:
         # Train baseline
-        lr_model = train_logistic_regression(X_train, y_train)
+        lr_model = train_logistic_regression(X_train, y_train, preprocessor)
         lr_preds = lr_model.predict_proba(X_val)[:, 1]
         lr_metrics = compute_metrics(y_val, lr_preds)
         print(f"LR Val Metrics: {lr_metrics}")
         
         # Train challenger
-        xgb_model = train_xgboost(X_train, y_train, config['model']['xgboost_grid'])
+        xgb_model = train_xgboost(X_train, y_train, config['model']['xgboost_grid'], preprocessor)
         xgb_preds = xgb_model.predict_proba(X_val)[:, 1]
         xgb_metrics = compute_metrics(y_val, xgb_preds)
         print(f"XGB Val Metrics: {xgb_metrics}")
@@ -113,6 +122,24 @@ def train_and_evaluate(df_train, df_val, df_test, config):
             serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE
         )
         
+        # Generate SHAP background dataset
+        import shap
+        import joblib
+        
+        print("Generating SHAP background dataset...")
+        X_train_preprocessed = best_model.named_steps['preprocessor'].transform(X_train)
+        # Handle sparse matrices returned by preprocessor if any, though ours should be dense
+        if hasattr(X_train_preprocessed, "toarray"):
+            X_train_preprocessed = X_train_preprocessed.toarray()
+            
+        background = shap.kmeans(X_train_preprocessed, 100)
+        
+        bg_path = "shap_background.pkl"
+        joblib.dump(background, bg_path)
+        mlflow.log_artifact(bg_path)
+        if os.path.exists(bg_path):
+            os.remove(bg_path)
+            
         return run.info.run_id, test_cost
 
 @task
@@ -147,7 +174,9 @@ def run_training_pipeline(config_path: str = "config/training_config.yaml"):
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
         
-    df_train_raw, df_val_raw, df_test_raw = load_and_split_data(config)
+    df_raw = load_data_task(config)
+    df_valid = validate_data_task(df_raw, config)
+    df_train_raw, df_val_raw, df_test_raw = split_data_task(df_valid, config)
     df_train, df_val, df_test = build_features_task(df_train_raw, df_val_raw, df_test_raw, config)
     
     run_id, test_cost = train_and_evaluate(df_train, df_val, df_test, config)

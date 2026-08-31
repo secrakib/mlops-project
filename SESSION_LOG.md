@@ -2,6 +2,8 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-08-31 | 20:37 | Verify Final Pipeline Execution; Clarify Architecture Choices | ✅✅ | [#2026-08-31-2037](#2026-08-31-2037-session-summary) |
+| 2026-08-31 | 20:14 | Refactor Offline ML Pipeline; Fix Prefect & Sklearn issues | ✅ | [#2026-08-31-2014](#2026-08-31-2014-session-summary) |
 | 2026-08-27 | 21:50 | Resolve Local Prefect DB Corruptions; Eliminate Target Leakage; Refactor Temporal Split to Ratios | ✅✅✅ | [#2026-08-27-2150](#2026-08-27-2150-session-summary) |
 | 2026-08-27 | 15:07 | Verify Status and Update Spec Remote | ✅ | [#2026-08-27-1507](#2026-08-27-1507-session-summary) |
 | 2026-08-27 | 15:05 | Create Base Dataset; Configure Git Ignore and Push | ✅✅ | [#2026-08-27-1505](#2026-08-27-1505-session-summary) |
@@ -212,5 +214,117 @@ None at this time. The documentation is up to date and synced.
 
 ### Open Threads / Next Steps
 None at this time. The model is realistically evaluated, XGBoost is winning, and the pipeline is solid.
+
+---
+
+### <a name="2026-08-31-2014-session-summary"></a>[2026-08-31 20:14] Session Summary
+
+**Duration:** ~2 hours
+**Overview:** This session focused on refactoring the Offline ML Pipeline (Part 3) to make it production-ready. We migrated feature configuration to a central YAML file, introduced strict data validation with Pandera, bundled preprocessing steps using scikit-learn Pipelines, added offline SHAP dataset generation, and resolved several environment/execution bugs.
+
+**Goals:** 1 total — 1 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Refactor Offline ML Pipeline
+
+**Status:** ✅ Done
+
+**Context:** The user wanted to eliminate target leakage and ensure zero training-serving skew before building the online FastAPI layer. The codebase needed a robust configuration and strict schema validations.
+
+**Approach / Plan:** We decided to extract feature names into `training_config.yaml`, use `pandera` to validate data immediately upon loading, and bundle `SimpleImputer` and `StandardScaler` with our estimators (`LogisticRegression` and `XGBClassifier`) into `sklearn.pipeline.Pipeline` objects. We also planned to pre-compute a SHAP background dataset to speed up online serving.
+
+**Work Done:**
+- Added `pandera` to dependencies and implemented `get_pandera_schema` with `strict='filter'`.
+- Updated `train.py` to use `Pipeline`, properly prefixing `GridSearchCV` parameters with `classifier__`.
+- Modified `flow.py` to include `validate_data_task` and generate/log a `shap_background.pkl` artifact.
+- Successfully executed the training flow on a minimal grid search, then reverted to the full parameter grid for the final training run.
+- Appended instructions on how to properly execute the training flow.
+
+**Errors & Issues:**
+- `sklearn.utils._param_validation.InvalidParameterError`: Older syntax `cv='prefit'` in `CalibratedClassifierCV` was deprecated and failed. Fixed by switching to `FrozenEstimator(model)`.
+- `UnicodeEncodeError` regarding a runner emoji `\U0001f3c3` in MLflow when executing the training script on Windows. Fixed by explicitly setting the console encoding before running. **Note: To run the training flow safely, you must use:**
+  ```powershell
+  $env:PYTHONIOENCODING="utf-8"
+  python -m src.training.flow
+  ```
+- `RuntimeError: main thread is not in main loop`: Matplotlib crashed at the end of the Prefect background task due to trying to launch a GUI. Fixed by adding `matplotlib.use('Agg')` in `evaluate.py`.
+
+**Files Touched:**
+- `config/training_config.yaml` — Migrated feature lists.
+- `src/features/feature_pipeline.py` — Added Pandera validation.
+- `src/training/train.py` — Wrapped models in `Pipeline`.
+- `src/training/flow.py` — Orchestrated new tasks and SHAP generation.
+- `src/training/evaluate.py` — Fixed `FrozenEstimator` and Matplotlib backend.
+- `requirements.txt` — Added `pandera`.
+- `spec.md` — Updated architectural plans.
+
+**Outcome:** The offline pipeline is fully refactored, robust, and correctly tracked in MLflow. The winning XGBoost model is properly aliased as Staging.
+
+---
+
+### Open Threads / Next Steps
+Begin implementation of the Online Serving Layer (FastAPI).
+
+---
+
+### <a name="2026-08-31-2037-session-summary"></a>[2026-08-31 20:37] Session Summary
+
+**Duration:** ~25 minutes
+**Overview:** This short follow-up session focused on verifying the success of the full-grid offline ML pipeline execution, and addressing user questions regarding model performance metrics (AUC-PR drop) and the necessity of certain YAML config blocks alongside Pandera validation.
+
+**Goals:** 2 total — 2 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Verify Final Pipeline Execution
+
+**Status:** ✅ Done
+
+**Context:** The final pipeline with the full XGBoost hyperparameter grid needed to be run to completion and registered to MLflow.
+
+**Approach / Plan:** The user manually ran the flow via terminal (`$env:PYTHONIOENCODING="utf-8"; python -m src.training.flow`) and provided the log output. I reviewed the logs for any concerning anomalies or failures.
+
+**Work Done:**
+- Reviewed the pipeline trace which showed a clean execution.
+- Verified XGBoost was selected as the winning model (learning_rate: 0.1, max_depth: 5, n_estimators: 200).
+- Confirmed MLflow effectively registered `version 8` as `Staging`.
+- Addressed minor warnings (Pydantic model namespace, Pandera import deprecation, and MLflow artifact path deprecation), clarifying that they are non-critical third-party notices.
+- Drafted the `implementation_plan.md` for Part 4 (Online Serving API) to tee up the next session.
+
+**Errors & Issues:**
+- Non-critical deprecation warnings from `pydantic`, `pandera`, and `mlflow`. No pipeline breaks.
+
+**Files Touched:**
+- `implementation_plan.md` — Drafted plans for FastAPI serving layer.
+
+**Outcome:** The offline training pipeline run is officially verified and completed.
+
+### Goal 2: Clarify Architecture Choices
+
+**Status:** ✅ Done
+
+**Context:** The user had two specific questions regarding the current state of the pipeline:
+1. Why the AUC-PR degraded to ~0.43 compared to a previous run from 18 hours ago (~0.71).
+2. Why we kept `leakage_cols` in `training_config.yaml` when `pandera` already drops all unselected columns using `strict='filter'`.
+
+**Approach / Plan:** Provide clear, context-aware explanations in chat without requiring code changes unless preferred by the user.
+
+**Work Done:**
+- Explained that the AUC-PR drop was due to successfully removing **Target Leakage**. The 0.71 run had illegal access to future payment information, whereas 0.43 represents an honest, robust baseline for origination-time credit risk prediction.
+- Confirmed the user's observation that `leakage_cols` is functionally dead code because Pandera's `strict='filter'` acts as a strict allowlist. We agreed to keep the block in the YAML purely as explicit documentation/warning to future developers about which columns are known leaks.
+
+**Errors & Issues:**
+- None.
+
+**Files Touched:**
+- None.
+
+**Outcome:** Clarified machine learning and architecture design decisions. User opted to retain the legacy config block for documentation purposes.
+
+---
+
+### Open Threads / Next Steps
+Begin implementation of the Online Serving Layer (FastAPI) as documented in the new implementation plan.
 
 ---

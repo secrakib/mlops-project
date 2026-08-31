@@ -1,15 +1,26 @@
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from scipy.stats import ks_2samp
 import os
+try:
+    from sklearn.calibration import FrozenEstimator
+except ImportError:
+    FrozenEstimator = None
 
 def calibrate_model(model, X_val: pd.DataFrame, y_val: pd.Series) -> CalibratedClassifierCV:
     """Calibrates the model using Isotonic regression."""
     print("Calibrating model...")
-    calibrated = CalibratedClassifierCV(estimator=model, method='isotonic', cv=3)
+    if FrozenEstimator is not None:
+        calibrated = CalibratedClassifierCV(estimator=FrozenEstimator(model), method='isotonic')
+    else:
+        # Fallback for older sklearn
+        calibrated = CalibratedClassifierCV(estimator=model, method='isotonic', cv='prefit')
+    
     calibrated.fit(X_val, y_val)
     return calibrated
 

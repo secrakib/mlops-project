@@ -28,33 +28,64 @@ def temporal_split(df: pd.DataFrame, val_ratio: float = 0.15, test_ratio: float 
     
     return df_train, df_val, df_test
 
-def build_features(df: pd.DataFrame, target_col: str, leakage_cols: list) -> pd.DataFrame:
+import pandera as pa
+from pandera import Column, DataFrameSchema
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+
+def get_pandera_schema(config: dict, is_inference: bool = False) -> pa.DataFrameSchema:
+    """Dynamically builds a Pandera schema based on the config."""
+    columns = {}
+    
+    numeric_features = config['features']['selected_numeric_features']
+    for feature in numeric_features:
+        # Numeric features coerced to float, nullable as Imputer handles NaNs
+        columns[feature] = Column(float, coerce=True, nullable=True)
+        
+    if not is_inference:
+        target_col = config['data']['target_col']
+        # Don't strictly check type for target/date to avoid parsing errors, just ensure presence
+        columns[target_col] = Column(coerce=False, nullable=True)
+        columns['issue_d'] = Column(coerce=False, nullable=True)
+        
+    return DataFrameSchema(columns=columns, strict='filter')
+
+def build_features(df: pd.DataFrame, config: dict, is_inference: bool = False) -> pd.DataFrame:
     """
-    Preprocesses the dataframe by creating the target,
-    dropping leakage/identifier columns, and selecting numeric features.
-    Also handles basic imputation.
+    Preprocesses the dataframe by validating with Pandera, creating the target,
+    and dropping unnecessary columns.
     """
     df = df.copy()
     
-    # Handle target if present
-    if target_col in df.columns:
-        # Assuming target_col is already 0/1 based on spec, but let's be safe
-        df = df[df[target_col].isin([0, 1])]
-        df['target'] = df[target_col].astype(int)
+    # 1. Validate and filter columns
+    schema = get_pandera_schema(config, is_inference=is_inference)
+    df = schema.validate(df)
     
-    # Drop leakage columns
-    df = df.drop(columns=leakage_cols, errors='ignore')
+    # 2. Handle target
+    if not is_inference:
+        target_col = config['data']['target_col']
+        if target_col in df.columns:
+            # Keep only valid binary targets and convert
+            df = df[df[target_col].isin([0, 1, '0', '1', 0.0, 1.0])]
+            df['target'] = df[target_col].astype(int)
+            # Drop the original target and issue_d which is no longer needed after split
+            df = df.drop(columns=[target_col, 'issue_d'], errors='ignore')
+            
+    return df
+
+def create_preprocessor(numeric_features: list) -> ColumnTransformer:
+    """Creates a scikit-learn preprocessor pipeline."""
+    numeric_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median')),
+        ('scaler', StandardScaler())
+    ])
     
-    # Drop identifiers and textual columns that aren't useful raw
-    identifiers = ['id', 'member_id', target_col, 'issue_d', 'target']
-    
-    # Select numeric features
-    numeric_df = df.select_dtypes(include=['float64', 'int64']).drop(columns=identifiers, errors='ignore')
-    
-    # Basic imputation (fill NaNs with 0)
-    numeric_df = numeric_df.fillna(0)
-    
-    if 'target' in df.columns:
-        numeric_df['target'] = df['target']
-        
-    return numeric_df
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numeric_transformer, numeric_features)
+        ],
+        remainder='drop'
+    )
+    return preprocessor
