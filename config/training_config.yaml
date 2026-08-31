@@ -95,11 +95,7 @@ model:
   xgboost_grid:
     max_depth: [3, 5]
     learning_rate: [0.01, 0.1]
-<<<<<<< HEAD
     n_estimators: [100,200] 
-=======
-    n_estimators: [100, 200]
->>>>>>> d5d7018 (refactor: offline ML pipeline with strict Pandera schema, Sklearn pipelines, and SHAP background logging)
 
 evaluation:
   cost_matrix:
