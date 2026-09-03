@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://api:8000
+      - PROMETHEUS_URL=http://prometheus:9090
+      - PUSHGATEWAY_URL=http://pushgateway:9091
+    depends_on:
+      - api
+
+  prometheus:
+    build:
+      context: .
+      dockerfile: Dockerfile.prometheus
+    ports:
+      - "9090:9090"
+    env_file:
+      - .env
+    depends_on:
+      - api
+      - pushgateway
+
+  pushgateway:
+    image: prom/pushgateway:v1.6.2
+    ports:
+      - "9091:9091"
