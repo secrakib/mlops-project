@@ -34,7 +34,7 @@ jobs:
           DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: |
-          pytest tests/
+          python -m pytest tests/
           
   # This block would deploy to Render if the tests pass
   # deploy:
