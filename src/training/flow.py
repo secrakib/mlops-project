@@ -128,7 +128,7 @@ def train_and_evaluate(df_train, df_val, df_test, config):
         
         print("Generating SHAP background dataset...")
         # Use a random sample of the original data as background to explain the whole pipeline
-        background = shap.sample(X_train, 100)
+        background = shap.sample(X_train, 1000)
         
         bg_path = "shap_background.pkl"
         joblib.dump(background, bg_path)

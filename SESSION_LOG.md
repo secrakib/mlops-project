@@ -2,6 +2,7 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-08-31 | 23:21 | Fix SHAP Background & API Scoring; Clarify DB Logging | ✅✅ | [#2026-08-31-2321](#2026-08-31-2321-session-summary) |
 | 2026-08-31 | 20:48 | Implement Online Serving Layer (Part 4); Fix Artifact Loading | ✅✅✅✅ | [#2026-08-31-2048](#2026-08-31-2048-session-summary) |
 | 2026-08-31 | 20:37 | Verify Final Pipeline Execution; Clarify Architecture Choices | ✅✅ | [#2026-08-31-2037](#2026-08-31-2037-session-summary) |
 | 2026-08-31 | 20:14 | Refactor Offline ML Pipeline; Fix Prefect & Sklearn issues | ✅ | [#2026-08-31-2014](#2026-08-31-2014-session-summary) |
@@ -457,5 +458,102 @@ Write a suite of `pytest` automated tests that utilize FastAPI's `TestClient` to
 
 ### Open Threads / Next Steps
 The Online Serving API is complete. The next logical step according to `spec.md` is to implement the monitoring and prediction logging pipelines (Part 5) to write live traffic to the Supabase database.
+
+---
+
+### <a name="2026-08-31-2321-session-summary"></a>[2026-08-31 23:21] Session Summary
+
+**Duration:** ~65 minutes
+
+**Overview:** This session focused on fixing the `/score` API endpoint which was returning an empty `shap_values` object. We traced the issue across both the offline training pipeline and the online serving script, discovering that `shap.KernelExplainer` crashed internally when passing NumPy arrays to a pipeline that expects Pandas DataFrames. We fixed this by capturing a raw Pandas DataFrame sample during training and safely wrapping the prediction function during serving. We also answered user queries regarding the database schema and latency tracking.
+
+**Goals:** 2 total — 2 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Fix SHAP Background & API Scoring
+
+**Status:** ✅ Done
+
+**Context:** The user reported that hitting the `/score` API endpoint yielded an empty dictionary for `shap_values` despite a valid payload. They requested a fine-grained deep dive to fix the problem, driven iteratively by a new pytest.
+
+**Approach / Plan:** Trace the `/score` execution and SHAP initialization. Write a pytest test case to verify `shap_values` presence. Fix SHAP background generation in the training pipeline and adjust the FastAPI prediction wrapper for `KernelExplainer`. Iteratively run pytest to verify the fix.
+
+**Work Done:**
+- Created a pytest `test_score_endpoint_shap_values_not_empty` in `test_api_contract.py`.
+- Modified `src/training/flow.py` to use `shap.sample(X_train, 100)` directly from the original Pandas DataFrame instead of running `kmeans` on the preprocessed numpy array.
+- Modified `src/serving/main.py` to wrap `mlflow_model.predict_proba` inside `predict_fn` to reconstruct the Pandas DataFrame, resolving the "Specifying columns using strings" error.
+- Fixed scope of `training_cfg` by declaring it global, so `predict_fn` could access feature names per request.
+- Flattened `class_1_shap` using `np.array(class_1_shap).flatten()` to resolve a TypeError when iterating.
+- Triggered the offline training Prefect flow to regenerate the model alias.
+- Pushed the changes to GitHub.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — Explainer Input Type Mismatch**
+- **Problem:** `shap.KernelExplainer` crashed with `Specifying the columns using strings is only supported for dataframes` because it passed a numpy array to a `ColumnTransformer` expecting a DataFrame.
+- **Diagnosis:** Traced `shap_background.pkl` generation in `flow.py` and found it was generated from `X_train_preprocessed` (a numpy array).
+- **Solution:** Modified `flow.py` to use `shap.sample(X_train, 100)` to preserve the Pandas DataFrame with column names. Wrapped `predict_proba` in `main.py` to convert the `KernelExplainer`'s numpy array back to a DataFrame.
+- **Result:** Resolved the ColumnTransformer error.
+- **Root Cause / Lesson:** `shap.KernelExplainer` converts inputs to numpy arrays during permutation. Sklearn pipelines with `ColumnTransformer` require the exact DataFrame structure if feature names are used.
+
+**Problem 2 — `training_cfg` Scope Issue**
+- **Problem:** `NameError: name 'training_cfg' is not defined` inside `score()` and `predict_fn()`.
+- **Diagnosis:** `training_cfg` was loaded as a local variable inside the `lifespan` async context manager and wasn't accessible by the route handlers.
+- **Solution:** Declared `training_cfg` as a global variable at the top of the file and added it to the `global` statement inside `lifespan`.
+- **Result:** Fixed the scope issue, allowing column names to be fetched.
+- **Root Cause / Lesson:** Variables loaded in FastAPI lifespan handlers need to be globally stored or attached to `app.state` to be accessible per-request.
+
+**Problem 3 — SHAP output shape casting**
+- **Problem:** `TypeError: only 0-dimensional arrays can be converted to Python scalars` during dictionary zip in `score()`.
+- **Diagnosis:** Found that `shap_vals[1][0]` was returning an array where scalars were expected, causing `float(x)` to fail.
+- **Solution:** Flattened the array using `np.array(class_1_shap).flatten()` before iterating.
+- **Result:** Fixed the iteration error, populating the dictionary successfully.
+- **Root Cause / Lesson:** Depending on model type and SHAP explainer, single-row SHAP outputs may contain extra nested dimensions.
+
+**Problem 4 — Terminal Encoding Error**
+- **Problem:** Prefect flow crashed with `UnicodeEncodeError` when trying to print a 🏃 emoji.
+- **Diagnosis:** Windows PowerShell defaults to `cp1252` encoding which doesn't support emojis.
+- **Solution:** Set `$env:PYTHONIOENCODING="utf-8"` before running the training script.
+- **Result:** Training flow ran successfully.
+- **Root Cause / Lesson:** Always enforce UTF-8 for subprocess stdout when dealing with MLflow and rich terminal outputs on Windows.
+
+**Errors & Issues:**
+- `Specifying the columns using strings is only supported for dataframes` — Resolved by mapping `predict_fn` inputs back to DataFrames.
+- `NameError: name 'training_cfg' is not defined` — Resolved by hoisting the configuration state to global.
+- `TypeError: only 0-dimensional arrays can be converted to Python scalars` — Resolved by applying `.flatten()` to SHAP output slices.
+- `UnicodeEncodeError` — Resolved by setting `PYTHONIOENCODING`.
+
+**Files Touched:**
+- `src/training/flow.py` — Fixed `shap_background` generation format.
+- `src/serving/main.py` — Rehydrated `predict_fn` into DataFrames, made `training_cfg` globally accessible, flattened SHAP output array.
+- `tests/test_api_contract.py` — Added test to ensure `shap_values` is correctly generated.
+
+**Outcome:** The `/score` API endpoint successfully returns the expected `shap_values` dictionary, validated dynamically by pytest against the live staging model.
+
+### Goal 2: Clarify DB Logging
+
+**Status:** ✅ Done
+
+**Context:** The user asked what fields to expect in the database table upon a successful score hit, and followed up by asking why the `latency_ms` value was currently logged as `0.0`.
+
+**Approach / Plan:** Review the `spec.md` and schema implementation to clarify the log output. Explain the schema and explain that `latency_ms` is hardcoded per the current implementation, and checking the spec confirms that there is no explicit future stage planned for it.
+
+**Work Done:**
+- Explained the `prediction_logs` table schema (id, timestamp, request_id, model_version, request_json, probability, decision, latency_ms).
+- Explained that `latency_ms` is currently hardcoded to `0.0` inside `score()` and offered the `time.perf_counter()` implementation.
+- Reviewed `spec.md` to confirm that fixing the latency is not scheduled for a future stage and should be implemented in this current Online Serving phase.
+
+**Problems Faced & Solutions:** No significant problems were encountered.
+
+**Files Touched:**
+- None (Discussion only).
+
+**Outcome:** The user's queries regarding the database state were answered clearly with reference to the existing implementation and spec.
+
+---
+
+### Open Threads / Next Steps
+Implement the `latency_ms` tracking dynamically inside `score()` and proceed to the Streamlit UI (Days 9-11) as per `spec.md`.
 
 ---
