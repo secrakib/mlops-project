@@ -45,5 +45,6 @@ jobs:
         env:
           DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+          DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
         run: |
           python src/training/flow.py
