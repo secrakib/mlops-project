@@ -8,6 +8,7 @@ on:
       - '.github/workflows/train.yml'
   schedule:
     - cron: '0 0 * * 0' # Weekly retrain if needed
+  workflow_dispatch:
 
 jobs:
   train:
