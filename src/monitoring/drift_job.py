@@ -7,6 +7,9 @@ import numpy as np
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 from datetime import datetime, timedelta
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
