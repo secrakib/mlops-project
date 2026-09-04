@@ -14,26 +14,18 @@ from src.serving.middleware import RequestIdMiddleware
 from src.common.logging_config import setup_prediction_logger
 from src.db.models import init_db
 
-# Globals to hold loaded models/assets
-mlflow_model = None
-shap_explainer = None
-cost_matrix = None
-serving_cfg = None
-training_cfg = None
-
 logger = setup_prediction_logger(db_url=settings.DATABASE_URL)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global mlflow_model, shap_explainer, cost_matrix, serving_cfg, training_cfg
     
     logger.info("Initializing Supabase Database schema...")
     init_db(settings.DATABASE_URL)
     
     logger.info("Loading configurations...")
-    serving_cfg = load_serving_config()
-    training_cfg = load_training_config()
-    cost_matrix = training_cfg["evaluation"]["cost_matrix"]
+    app.state.serving_cfg = load_serving_config()
+    app.state.training_cfg = load_training_config()
+    app.state.cost_matrix = app.state.training_cfg["evaluation"]["cost_matrix"]
     
     # Configure MLflow auth (needed to pull model & SHAP artifacts)
     os.environ["MLFLOW_TRACKING_USERNAME"] = settings.DAGSHUB_USER
@@ -41,37 +33,52 @@ async def lifespan(app: FastAPI):
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     
     # Load MLflow Model
-    model_uri = f"models:/{serving_cfg['model_name']}@{settings.MODEL_ALIAS}"
+    model_uri = f"models:/{app.state.serving_cfg['model_name']}@{settings.MODEL_ALIAS}"
     logger.info(f"Loading MLflow model: {model_uri}")
-    mlflow_model = mlflow.sklearn.load_model(model_uri)
+    app.state.mlflow_model = mlflow.sklearn.load_model(model_uri)
     
-    # Download SHAP background
-    logger.info("Resolving MLflow run to fetch SHAP background...")
-    client = mlflow.tracking.MlflowClient()
     try:
-        model_version = client.get_model_version_by_alias(serving_cfg['model_name'], settings.MODEL_ALIAS)
-        run_id = model_version.run_id
+        base_model = app.state.mlflow_model
+        if type(base_model).__name__ == 'CalibratedClassifierCV':
+            if hasattr(base_model, 'calibrated_classifiers_') and len(base_model.calibrated_classifiers_) > 0:
+                base_model = base_model.calibrated_classifiers_[0].estimator
+            else:
+                base_model = base_model.estimator
+            if type(base_model).__name__ == 'FrozenEstimator':
+                base_model = getattr(base_model, 'estimator', base_model)
+                
+        model_step = base_model.steps[-1][1]
+        model_type = type(model_step).__name__
+        logger.info(f"Loaded model type: {model_type}")
         
-        import joblib
-        shap_bg_path = client.download_artifacts(run_id, "shap_background.pkl")
-        shap_background = joblib.load(shap_bg_path)
+        if model_type == 'XGBClassifier':
+            app.state.is_tree = True
+            app.state.shap_explainer = shap.TreeExplainer(model_step)
+            app.state.preprocessor = base_model.steps[0][1]
+            logger.info("Initialized SHAP TreeExplainer.")
+        else:
+            app.state.is_tree = False
+            logger.info("Resolving MLflow run to fetch SHAP background...")
+            client = mlflow.tracking.MlflowClient()
+            model_version = client.get_model_version_by_alias(app.state.serving_cfg['model_name'], settings.MODEL_ALIAS)
             
-        # We need to wrap the prediction function to reconstruct the DataFrame,
-        # because KernelExplainer converts the DataFrame into a numpy array,
-        # and the sklearn pipeline expects a DataFrame with column names.
-        logger.info("Initializing SHAP KernelExplainer...")
-        
-        # Define prediction wrapper
-        def predict_fn(X):
-            import pandas as pd
-            cols = training_cfg['features']['selected_numeric_features']
-            df_x = pd.DataFrame(X, columns=cols)
-            return mlflow_model.predict_proba(df_x)
-            
-        shap_explainer = shap.KernelExplainer(predict_fn, shap_background)
+            import joblib
+            shap_bg_path = client.download_artifacts(model_version.run_id, "shap_background.pkl")
+            shap_background = joblib.load(shap_bg_path)
+                
+            logger.info("Initializing SHAP KernelExplainer...")
+            def predict_fn(X):
+                import pandas as pd
+                cols = app.state.training_cfg['features']['selected_numeric_features']
+                df_x = pd.DataFrame(X, columns=cols)
+                return app.state.mlflow_model.predict_proba(df_x)
+                
+            app.state.shap_explainer = shap.KernelExplainer(predict_fn, shap_background)
     except Exception as e:
-        logger.error(f"Failed to load SHAP artifact: {e}")
-        shap_explainer = None # We will just return empty dict if this fails
+        import traceback
+        traceback.print_exc()
+        logger.error(f"Failed to load SHAP artifact or explainer: {e}")
+        app.state.shap_explainer = None # We will just return empty dict if this fails
         
     logger.info("FastAPI lifecycle startup complete.")
     yield
@@ -96,43 +103,50 @@ app.add_middleware(
 Instrumentator().instrument(app).expose(app)
 
 @app.get("/health")
-def health_check():
+def health_check(request: Request):
     """Liveness probe. Essential for Render cold starts and monitoring."""
-    if not mlflow_model:
+    if not getattr(request.app.state, 'mlflow_model', None):
         raise HTTPException(status_code=503, detail="Model not loaded yet.")
     return {"status": "ok", "model_loaded": True}
 
 @app.post("/score", response_model=ScoreResponse)
-def score(request: ScoreRequest):
+def score(request: Request, payload: ScoreRequest):
     """Predicts default probability and returns SHAP values."""
     from src.common.logging_config import request_id_var
     req_id = request_id_var.get()
     
+    mlflow_model = request.app.state.mlflow_model
+    cost_matrix = request.app.state.cost_matrix
+    shap_explainer = request.app.state.shap_explainer
+    training_cfg = request.app.state.training_cfg
+    is_tree = getattr(request.app.state, 'is_tree', False)
+    
     # 1. Convert to DataFrame (respects order of Pydantic model)
-    data_dict = request.model_dump()
+    data_dict = payload.model_dump()
     df = pd.DataFrame([data_dict])
     
     # 2. Predict Probability (Class 1 = Default)
-    # predict_proba returns [[prob_0, prob_1]]
     proba = float(mlflow_model.predict_proba(df)[0][1])
     
     # 3. Decision Logic (Cost-Matrix Threshold)
     threshold = cost_matrix["fp_cost"] / (cost_matrix["fp_cost"] + cost_matrix["fn_cost"])
     decision = "Reject" if proba >= threshold else "Approve"
     
-    # 4. SHAP Explanations (avoiding Matplotlib plots entirely)
+    # 4. SHAP Explanations
     feat_shap_dict = {}
     if shap_explainer:
-        # For KernelExplainer, shap_values returns a list of arrays (one for each class)
-        # We take index 1 (default class). 
-        # shap_values[1] shape: (1, n_features)
         import numpy as np
-        shap_vals = shap_explainer.shap_values(df, silent=True)
-        # Handle depending on shap version / model output
-        class_1_shap = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
-        class_1_shap = np.array(class_1_shap).flatten()
-        
-        # Zip with original features from config, as df might have different order
+        if is_tree:
+            preprocessor = request.app.state.preprocessor
+            transformed_data = preprocessor.transform(df)
+            shap_vals = shap_explainer.shap_values(transformed_data)
+            # For XGBoost binary classification, shap_vals is typically (n_samples, n_features)
+            class_1_shap = np.array(shap_vals).flatten()
+        else:
+            shap_vals = shap_explainer.shap_values(df, silent=True)
+            class_1_shap = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
+            class_1_shap = np.array(class_1_shap).flatten()
+            
         cols = training_cfg['features']['selected_numeric_features']
         feat_shap_dict = dict(zip(cols, [float(x) for x in class_1_shap]))
         
@@ -141,8 +155,7 @@ def score(request: ScoreRequest):
         "request_json": data_dict,
         "probability": proba,
         "decision": decision,
-        "model_version": settings.MODEL_ALIAS,
-        "latency_ms": 0.0,
+        "model_version": settings.MODEL_ALIAS
     }
     # This automatically includes the request_id thanks to our RequestIdFilter
     logger.info(log_payload)

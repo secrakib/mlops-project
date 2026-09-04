@@ -94,6 +94,13 @@ def train_and_evaluate(df_train, df_val, df_test, config):
         
         # Optimize threshold on Val
         calibrated_val_preds = calibrated_model.predict_proba(X_val)[:, 1]
+        
+        import numpy as np
+        np.save("baseline_probs.npy", calibrated_val_preds)
+        mlflow.log_artifact("baseline_probs.npy")
+        if os.path.exists("baseline_probs.npy"):
+            os.remove("baseline_probs.npy")
+            
         opt_thresh, min_cost = optimize_threshold(y_val, calibrated_val_preds, cost_matrix)
         
         # Log validation metrics
@@ -148,11 +155,15 @@ def compare_and_promote(run_id, candidate_cost):
     # Check production model
     try:
         prod_model = client.get_model_version_by_alias(model_name, "Production")
-        # In a full setup, we'd fetch prod_cost from tags or re-evaluate. 
-        # For this spec, we will promote to Staging unconditionally, 
-        # and in reality promotion to Prod is a manual gate anyway.
-        # So we just alias as Staging.
-        print("Production model exists. Assigning candidate to Staging.")
+        prod_run = client.get_run(prod_model.run_id)
+        prod_cost = prod_run.data.metrics.get("test_expected_cost", float('inf'))
+        
+        if candidate_cost < prod_cost:
+            print(f"Candidate cost {candidate_cost:.2f} is better than Production cost {prod_cost:.2f}. Promoting to Staging.")
+        else:
+            print(f"Candidate cost {candidate_cost:.2f} is worse than Production cost {prod_cost:.2f}. Rejecting.")
+            return
+            
     except Exception:
         print("No Production model found. Assigning candidate to Staging.")
         

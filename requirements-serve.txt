@@ -4,8 +4,6 @@ scipy
 python-dotenv
 xgboost
 shap
-dvc
-dagshub
 mlflow
 fastapi
 uvicorn
@@ -14,14 +12,6 @@ pydantic-settings
 streamlit
 python-json-logger
 psycopg2-binary
-supabase
-pytest
 prometheus-client
-dvc-s3
-protobuf
-python-dateutil
-prefect<3
-anyio<4
-pandera
 prometheus-fastapi-instrumentator
 httpx

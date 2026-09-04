@@ -26,7 +26,7 @@ def wait_for_services():
         f"{PUSHGATEWAY_URL}/-/healthy"
     ]
     
-    max_retries = 18 # 90 seconds (5s * 18)
+    max_retries = 60 # (5s * 100)
     for i in range(max_retries):
         awake = []
         for url in endpoints:
@@ -83,10 +83,27 @@ def run_drift_job():
         logger.info("No predictions in the last 24h. Exiting.")
         return
         
-    # In a real scenario, we load the baseline stats from a JSON artifact logged in MLflow
-    # For now, we simulate the expected baseline distribution (e.g. from the validation set)
-    # Assuming a uniformish distribution for the baseline
-    expected_probs = np.random.uniform(0, 1, 1000)
+    import mlflow
+    from mlflow.tracking import MlflowClient
+    
+    dagshub_user = os.environ.get("DAGSHUB_USER")
+    dagshub_repo = os.environ.get("DAGSHUB_REPO")
+    dagshub_token = os.environ.get("DAGSHUB_TOKEN")
+    
+    if dagshub_user and dagshub_repo and dagshub_token:
+        os.environ["MLFLOW_TRACKING_USERNAME"] = dagshub_user
+        os.environ["MLFLOW_TRACKING_PASSWORD"] = dagshub_token
+        mlflow.set_tracking_uri(f"https://dagshub.com/{dagshub_user}/{dagshub_repo}.mlflow")
+        
+    client = MlflowClient()
+    try:
+        model_version = client.get_model_version_by_alias("credit-risk-model", "Staging")
+        artifact_path = client.download_artifacts(model_version.run_id, "baseline_probs.npy")
+        expected_probs = np.load(artifact_path)
+        logger.info(f"Loaded expected_probs from MLflow run {model_version.run_id}. Size: {len(expected_probs)}")
+    except Exception as e:
+        logger.error(f"Failed to load baseline_probs from MLflow: {e}")
+        return
     
     actual_probs = df_actual['probability'].values
     

@@ -11,8 +11,7 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
     request_json JSONB NOT NULL,
     probability FLOAT NOT NULL,
     decision VARCHAR(20) NOT NULL,
-    model_version VARCHAR(50) NOT NULL,
-    latency_ms FLOAT NOT NULL
+    model_version VARCHAR(50) NOT NULL
 );
 """
 

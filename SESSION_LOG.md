@@ -2,6 +2,7 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-09-04 | 17:41 | Repo Hygiene & API Stability; SHAP TreeExplainer Refactoring; Real Drift Monitoring & Testing | ✅✅✅ | [#2026-09-04-1741](#2026-09-04-1741-session-summary) |
 | 2026-08-31 | 23:21 | Fix SHAP Background & API Scoring; Clarify DB Logging | ✅✅ | [#2026-08-31-2321](#2026-08-31-2321-session-summary) |
 | 2026-08-31 | 20:48 | Implement Online Serving Layer (Part 4); Fix Artifact Loading | ✅✅✅✅ | [#2026-08-31-2048](#2026-08-31-2048-session-summary) |
 | 2026-08-31 | 20:37 | Verify Final Pipeline Execution; Clarify Architecture Choices | ✅✅ | [#2026-08-31-2037](#2026-08-31-2037-session-summary) |
@@ -549,6 +550,201 @@ The Online Serving API is complete. The next logical step according to `spec.md`
 **Files Touched:**
 - None (Discussion only).
 
+**Problems Faced & Solutions:** No significant problems were encountered during planning.
+
+**Files Touched:**
+- `implementation_plan.md` — Documented the full Part 4 architecture.
+- `scratch/test_db.py` — Verified Supabase connectivity.
+
+**Outcome:** We achieved alignment on the API architecture and confirmed that our external logging database was reachable.
+
+---
+
+### Goal 2: Implement FastAPI App & Middleware
+
+**Status:** ✅ Done
+
+**Context:** With the plan approved, we needed to write the actual code for the serving layer, ensuring strong typing, observability, and adherence to the trained model's feature schema.
+
+**Approach / Plan:** 
+We built the app layer-by-layer: first configuration, then dynamic schemas (reading exactly what the model expects from `training_config.yaml`), then request ID middleware (for tracing), and finally the `main.py` router containing the `/score`, `/health`, and `/metrics` endpoints.
+
+**Work Done:**
+- Created `config/serving_config.yaml` and `src/serving/config.py` for environment parsing.
+- Created `src/serving/schemas.py` using Pydantic's `create_model` to enforce the 77-feature numeric schema dynamically.
+- Created `src/serving/middleware.py` utilizing `contextvars` to generate and inject a unique `X-Request-ID`.
+- Authored `src/serving/main.py` implementing the FastAPI application, Prometheus metrics, and the model prediction logic.
+
+**Problems Faced & Solutions:** No significant problems were encountered.
+
+**Files Touched:**
+- `config/serving_config.yaml`, `src/serving/config.py`, `src/serving/schemas.py`, `src/serving/middleware.py`, `src/serving/main.py` — Created the core serving application.
+- `requirements.txt` — Added `fastapi`, `uvicorn`, `prometheus-fastapi-instrumentator`, and `httpx`.
+
+**Outcome:** The FastAPI application was fully constructed and ready for startup testing.
+
+---
+
+### Goal 3: Fix Artifact Loading Issues
+
+**Status:** ✅ Done
+
+**Context:** When attempting to boot the FastAPI server locally using `uvicorn`, the application crashed during the `lifespan` startup phase while attempting to download and load the MLflow model and SHAP artifacts.
+
+**Approach / Plan:** 
+We had to debug two sequential startup crashes related to how the training pipeline saved artifacts versus how the serving pipeline loaded them.
+
+**Work Done:**
+- Replaced `pickle.load()` with `joblib.load()` in `main.py`.
+- Updated `src/training/flow.py` to use `shap.sample(X_train, 100)` instead of `shap.kmeans` on preprocessed data.
+- Ran `$env:PYTHONIOENCODING="utf-8"; python -m src.training.flow` to register the new model version (v9) to `Staging`.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — UnpicklingError**
+- **Problem:** Uvicorn crashed with `_pickle.UnpicklingError` when loading `shap_background.pkl`.
+- **Diagnosis:** The artifact was saved in `flow.py` using `joblib.dump()`, but `main.py` was attempting to load it using the standard `pickle.load()` module.
+- **Solution:** Modified `src/serving/main.py` to import and use `joblib.load()`.
+- **Result:** The server successfully loaded the file, moving us to the next error.
+- **Root Cause / Lesson:** Symmetric serialization libraries must be used across the training and serving boundaries.
+
+**Problem 2 — SHAP Explainer Initialization Crash**
+- **Problem:** Uvicorn crashed with `Failed to load SHAP artifact: Specifying the columns using strings is only supported for dataframes.`
+- **Diagnosis:** The MLflow model (a scikit-learn Pipeline) expects a raw Pandas DataFrame with string columns, but the background dataset was saved as a NumPy array.
+- **Solution:** Modified `flow.py` to save a random sample of the raw Pandas DataFrame (`shap.sample(X_train, 100)`).
+- **Result:** FastAPI `KernelExplainer` successfully loaded the artifact and calculated SHAP values mapped precisely to raw inputs.
+- **Root Cause / Lesson:** When using SHAP `KernelExplainer` with a full sklearn Pipeline that relies on Pandas DataFrames, the background dataset must also be a Pandas DataFrame to preserve column names.
+
+**Problem 3 — Missing Unicode Encodings in Plan**
+- **Problem:** The implementation plan to fix the SHAP issue omitted `$env:PYTHONIOENCODING="utf-8"`, which would have caused Windows PowerShell to crash when MLflow printed emojis.
+- **Diagnosis:** The user reviewed the plan and referred to `SESSION_LOG.md` to flag the missing encoding setting.
+- **Solution:** Rewrote the implementation plan to prepend `$env:PYTHONIOENCODING="utf-8"` before all execution commands.
+- **Result:** All scripts executed cleanly without `UnicodeEncodeError`.
+- **Root Cause / Lesson:** Always apply the Unicode encoding fix on Windows when running MLflow scripts.
+
+**Files Touched:**
+- `src/serving/main.py` — Switched to `joblib`.
+- `src/training/flow.py` — Updated SHAP background to raw DataFrame.
+
+**Outcome:** The FastAPI server successfully completes its lifespan startup routine and connects to MLflow.
+
+---
+
+### Goal 4: Verify API Contract
+
+**Status:** ✅ Done
+
+**Context:** With the server theoretically stable, we needed mathematical proof that the endpoints satisfy the contract established in `spec.md`.
+
+**Approach / Plan:** 
+Write a suite of `pytest` automated tests that utilize FastAPI's `TestClient` to hit the `/health` and `/score` endpoints, verifying response structures and HTTP codes.
+
+**Work Done:**
+- Authored `tests/test_api_contract.py`.
+- Executed `$env:PYTHONIOENCODING="utf-8"; pytest tests/test_api_contract.py`.
+
+**Problems Faced & Solutions:** No significant problems were encountered. The tests passed (`4 passed`) on the first run after the SHAP fix was applied.
+
+**Files Touched:**
+- `tests/test_api_contract.py` — Created test suite.
+
+**Outcome:** We confirmed the `/score` endpoint correctly returns a probability, decision, request ID, and properly mapped `shap_values`. The Online Serving Layer is fully operational locally.
+
+---
+
+### Open Threads / Next Steps
+The Online Serving API is complete. The next logical step according to `spec.md` is to implement the monitoring and prediction logging pipelines (Part 5) to write live traffic to the Supabase database.
+
+---
+
+### <a name="2026-08-31-2321-session-summary"></a>[2026-08-31 23:21] Session Summary
+
+**Duration:** ~65 minutes
+
+**Overview:** This session focused on fixing the `/score` API endpoint which was returning an empty `shap_values` object. We traced the issue across both the offline training pipeline and the online serving script, discovering that `shap.KernelExplainer` crashed internally when passing NumPy arrays to a pipeline that expects Pandas DataFrames. We fixed this by capturing a raw Pandas DataFrame sample during training and safely wrapping the prediction function during serving. We also answered user queries regarding the database schema and latency tracking.
+
+**Goals:** 2 total — 2 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Fix SHAP Background & API Scoring
+
+**Status:** ✅ Done
+
+**Context:** The user reported that hitting the `/score` API endpoint yielded an empty dictionary for `shap_values` despite a valid payload. They requested a fine-grained deep dive to fix the problem, driven iteratively by a new pytest.
+
+**Approach / Plan:** Trace the `/score` execution and SHAP initialization. Write a pytest test case to verify `shap_values` presence. Fix SHAP background generation in the training pipeline and adjust the FastAPI prediction wrapper for `KernelExplainer`. Iteratively run pytest to verify the fix.
+
+**Work Done:**
+- Created a pytest `test_score_endpoint_shap_values_not_empty` in `test_api_contract.py`.
+- Modified `src/training/flow.py` to use `shap.sample(X_train, 100)` directly from the original Pandas DataFrame instead of running `kmeans` on the preprocessed numpy array.
+- Modified `src/serving/main.py` to wrap `mlflow_model.predict_proba` inside `predict_fn` to reconstruct the Pandas DataFrame, resolving the "Specifying columns using strings" error.
+- Fixed scope of `training_cfg` by declaring it global, so `predict_fn` could access feature names per request.
+- Flattened `class_1_shap` using `np.array(class_1_shap).flatten()` to resolve a TypeError when iterating.
+- Triggered the offline training Prefect flow to regenerate the model alias.
+- Pushed the changes to GitHub.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — Explainer Input Type Mismatch**
+- **Problem:** `shap.KernelExplainer` crashed with `Specifying the columns using strings is only supported for dataframes` because it passed a numpy array to a `ColumnTransformer` expecting a DataFrame.
+- **Diagnosis:** Traced `shap_background.pkl` generation in `flow.py` and found it was generated from `X_train_preprocessed` (a numpy array).
+- **Solution:** Modified `flow.py` to use `shap.sample(X_train, 100)` to preserve the Pandas DataFrame with column names. Wrapped `predict_proba` in `main.py` to convert the `KernelExplainer`'s numpy array back to a DataFrame.
+- **Result:** Resolved the ColumnTransformer error.
+- **Root Cause / Lesson:** `shap.KernelExplainer` converts inputs to numpy arrays during permutation. Sklearn pipelines with `ColumnTransformer` require the exact DataFrame structure if feature names are used.
+
+**Problem 2 — `training_cfg` Scope Issue**
+- **Problem:** `NameError: name 'training_cfg' is not defined` inside `score()` and `predict_fn()`.
+- **Diagnosis:** `training_cfg` was loaded as a local variable inside the `lifespan` async context manager and wasn't accessible by the route handlers.
+- **Solution:** Declared `training_cfg` as a global variable at the top of the file and added it to the `global` statement inside `lifespan`.
+- **Result:** Fixed the scope issue, allowing column names to be fetched.
+- **Root Cause / Lesson:** Variables loaded in FastAPI lifespan handlers need to be globally stored or attached to `app.state` to be accessible per-request.
+
+**Problem 3 — SHAP output shape casting**
+- **Problem:** `TypeError: only 0-dimensional arrays can be converted to Python scalars` during dictionary zip in `score()`.
+- **Diagnosis:** Found that `shap_vals[1][0]` was returning an array where scalars were expected, causing `float(x)` to fail.
+- **Solution:** Flattened the array using `np.array(class_1_shap).flatten()` before iterating.
+- **Result:** Fixed the iteration error, populating the dictionary successfully.
+- **Root Cause / Lesson:** Depending on model type and SHAP explainer, single-row SHAP outputs may contain extra nested dimensions.
+
+**Problem 4 — Terminal Encoding Error**
+- **Problem:** Prefect flow crashed with `UnicodeEncodeError` when trying to print a 🏃 emoji.
+- **Diagnosis:** Windows PowerShell defaults to `cp1252` encoding which doesn't support emojis.
+- **Solution:** Set `$env:PYTHONIOENCODING="utf-8"` before running the training script.
+- **Result:** Training flow ran successfully.
+- **Root Cause / Lesson:** Always enforce UTF-8 for subprocess stdout when dealing with MLflow and rich terminal outputs on Windows.
+
+**Errors & Issues:**
+- `Specifying the columns using strings is only supported for dataframes` — Resolved by mapping `predict_fn` inputs back to DataFrames.
+- `NameError: name 'training_cfg' is not defined` — Resolved by hoisting the configuration state to global.
+- `TypeError: only 0-dimensional arrays can be converted to Python scalars` — Resolved by applying `.flatten()` to SHAP output slices.
+- `UnicodeEncodeError` — Resolved by setting `PYTHONIOENCODING`.
+
+**Files Touched:**
+- `src/training/flow.py` — Fixed `shap_background` generation format.
+- `src/serving/main.py` — Rehydrated `predict_fn` into DataFrames, made `training_cfg` globally accessible, flattened SHAP output array.
+- `tests/test_api_contract.py` — Added test to ensure `shap_values` is correctly generated.
+
+**Outcome:** The `/score` API endpoint successfully returns the expected `shap_values` dictionary, validated dynamically by pytest against the live staging model.
+
+### Goal 2: Clarify DB Logging
+
+**Status:** ✅ Done
+
+**Context:** The user asked what fields to expect in the database table upon a successful score hit, and followed up by asking why the `latency_ms` value was currently logged as `0.0`.
+
+**Approach / Plan:** Review the `spec.md` and schema implementation to clarify the log output. Explain the schema and explain that `latency_ms` is hardcoded per the current implementation, and checking the spec confirms that there is no explicit future stage planned for it.
+
+**Work Done:**
+- Explained the `prediction_logs` table schema (id, timestamp, request_id, model_version, request_json, probability, decision, latency_ms).
+- Explained that `latency_ms` is currently hardcoded to `0.0` inside `score()` and offered the `time.perf_counter()` implementation.
+- Reviewed `spec.md` to confirm that fixing the latency is not scheduled for a future stage and should be implemented in this current Online Serving phase.
+
+**Problems Faced & Solutions:** No significant problems were encountered.
+
+**Files Touched:**
+- None (Discussion only).
+
 **Outcome:** The user's queries regarding the database state were answered clearly with reference to the existing implementation and spec.
 
 ---
@@ -557,3 +753,103 @@ The Online Serving API is complete. The next logical step according to `spec.md`
 Implement the `latency_ms` tracking dynamically inside `score()` and proceed to the Streamlit UI (Days 9-11) as per `spec.md`.
 
 ---
+
+### <a name="2026-09-04-1741-session-summary"></a>[2026-09-04 17:41] Session Summary
+
+**Duration:** ~7.5 hours (started around 10:13)
+
+**Overview:** This extensive session was an end-to-end architectural evaluation and refactoring sprint. The user initiated a critical review of the repository hygiene, the API serving layer's stability, and the mathematical soundness of both model promotion and drift monitoring. We successfully eliminated technical debt by removing redundant files, replacing global states with FastAPI's `app.state`, introducing database connection pooling, correcting the SHAP logic to extract exact `TreeExplainer` values from a calibrated XGBoost pipeline, and implementing a mathematically accurate baseline comparison for the Prometheus drift job. Comprehensive integration tests confirmed that everything works seamlessly.
+
+**Goals:** 3 total — 3 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: Repository Hygiene & API Stability
+
+**Status:** ✅ Done
+
+**Context:** The workspace contained lingering debug scripts, an empty DVC config, and cluttered requirements. Moreover, the FastAPI app (`main.py`) relied on global variables which could lead to memory leaks, and used a new database connection per API hit causing network bottlenecks. The user also pointed out that logging `latency_ms` to Postgres was redundant since Prometheus already tracks latency natively.
+
+**Approach / Plan:** 
+1. Delete redundant files (`dvc.yaml`, `temp_training/`, `check_db.py`).
+2. Split `requirements.txt` into `-serve` and `-train` variants to optimize the Docker image.
+3. Remove `latency_ms` from `models.py` and drop the column from the Supabase table.
+4. Integrate `psycopg2.pool.SimpleConnectionPool` into `PostgresHandler` to handle database connections safely.
+5. Move all model loading and global state into FastAPI's `app.state` within the `lifespan` context manager.
+
+**Work Done:**
+- Deleted unnecessary files and split `requirements.txt`.
+- Executed SQL commands to drop the `prediction_logs` table (and recreated it without `latency_ms`).
+- Implemented connection pooling in `PostgresHandler`.
+- Refactored `main.py` to use `app.state` instead of globals.
+
+**Problems Faced & Solutions:** No significant problems were encountered.
+
+**Files Touched:**
+- `requirements.txt`, `requirements-serve.txt`, `requirements-train.txt` — Split dependencies.
+- `Dockerfile` — Updated to use `requirements-serve.txt`.
+- `src/db/models.py` — Removed `latency_ms`.
+- `src/common/postgres_handler.py` — Implemented `psycopg2.pool`.
+- `src/serving/main.py` — Replaced global variables with `app.state`.
+
+**Outcome:** The codebase is leaner, the Docker builds are faster, and the API is resilient to high concurrency without memory or connection leaks.
+
+### Goal 2: SHAP TreeExplainer Refactoring
+
+**Status:** ✅ Done
+
+**Context:** The previous implementation defaulted to SHAP's `KernelExplainer`, which is model-agnostic, slow, and approximate. Since the winning model is an `XGBClassifier`, it should natively use the exact and blazing-fast `TreeExplainer`. However, the model is wrapped inside a `CalibratedClassifierCV` and a scikit-learn `Pipeline`, complicating extraction.
+
+**Approach / Plan:** Dynamically detect if the loaded model is tree-based. If so, unwrap the `CalibratedClassifierCV` to reach the base `Pipeline`, extract the `XGBClassifier` estimator for the `TreeExplainer`, and extract the preprocessing steps to transform the incoming payload before applying SHAP.
+
+**Work Done:**
+- Modified `main.py` `lifespan` to recursively unwrap `CalibratedClassifierCV` and `FrozenEstimator` to find the base scikit-learn `Pipeline`.
+- Extracted the preprocessing step (`base_model.steps[0][1]`) and the classifier step (`base_model.steps[-1][1]`).
+- Initialized `shap.TreeExplainer` on the classifier.
+- Updated the `/score` endpoint to use the extracted preprocessor to transform the DataFrame, generate SHAP values using the `TreeExplainer`, and safely format the array to a dictionary.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — Wrapper Extraction Failure**
+- **Problem:** `AttributeError: 'CalibratedClassifierCV' object has no attribute 'steps'` during `lifespan` startup.
+- **Diagnosis:** The script tried to access `.steps` on the MLflow model directly, assuming it was a `Pipeline`, but it was actually wrapped in `CalibratedClassifierCV` by the `evaluate.py` calibration step.
+- **Solution:** Added a robust unwrapping block in `main.py` that handles `CalibratedClassifierCV` (checking `calibrated_classifiers_` or `.estimator`) and `FrozenEstimator` to safely isolate the underlying `Pipeline`.
+- **Result:** SHAP initialization succeeded.
+- **Root Cause / Lesson:** Scikit-learn wrappers bury the original estimator. You must traverse the object hierarchy to retrieve specific steps for specialized tools like SHAP.
+
+**Files Touched:**
+- `src/serving/main.py` — Implemented dynamic unwrap logic for `TreeExplainer` and payload transformation.
+
+**Outcome:** The scoring API now correctly and rapidly computes exact SHAP values for XGBoost models.
+
+### Goal 3: Real Drift Monitoring & Testing
+
+**Status:** ✅ Done
+
+**Context:** The `drift_job.py` monitor was hardcoded to use a fake `np.random.uniform` distribution for baseline comparison. To make drift detection real, the offline pipeline needed to save actual validation probabilities, and the drift job needed to fetch them from MLflow. We also needed automated integration tests for the API.
+
+**Approach / Plan:**
+1. Update `flow.py` to generate and log `baseline_probs.npy` as an artifact to MLflow alongside the model.
+2. Update `drift_job.py` to download this artifact from the Staging model and calculate true Population Stability Index (PSI) against live traffic.
+3. Write `tests/test_integration.py` to hit the FastAPI app via `TestClient` and verify end-to-end functionality.
+
+**Work Done:**
+- Updated `flow.py` to save `baseline_probs.npy` and introduced a cost-based model promotion gate.
+- Refactored `drift_job.py` to use `MlflowClient` to fetch `baseline_probs.npy`.
+- Created `test_integration.py` to test `/health`, `/score`, and `/metrics`.
+- Ran the integration tests via pytest. All passed perfectly.
+
+**Problems Faced & Solutions:** No significant problems were encountered. Tests passed seamlessly.
+
+**Files Touched:**
+- `src/training/flow.py` — Logged baseline probabilities.
+- `src/monitoring/drift_job.py` — Loaded baseline probabilities from MLflow.
+- `tests/test_integration.py` — Created API integration suite.
+
+**Outcome:** Drift detection is mathematically solid, and the API is fully covered by integration tests.
+
+---
+
+### Open Threads / Next Steps
+
+None. The architecture refactoring is complete, tested, and verified.

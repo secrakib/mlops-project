@@ -1,0 +1,10 @@
+dvc
+dagshub
+supabase
+pytest
+dvc-s3
+protobuf
+python-dateutil
+prefect<3
+anyio<4
+pandera
