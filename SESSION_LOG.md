@@ -2,6 +2,7 @@
 
 | Date | Session Time | Goals | Status | Jump |
 |------|---------------|-------|--------|------|
+| 2026-09-04 | 18:22 | CI/CT Workflow Dependency Resolution; Strict Version Pinning & Python 3.12 Alignment | ✅✅ | [#2026-09-04-1822](#2026-09-04-1822-session-summary) |
 | 2026-09-04 | 17:41 | Repo Hygiene & API Stability; SHAP TreeExplainer Refactoring; Real Drift Monitoring & Testing | ✅✅✅ | [#2026-09-04-1741](#2026-09-04-1741-session-summary) |
 | 2026-08-31 | 23:21 | Fix SHAP Background & API Scoring; Clarify DB Logging | ✅✅ | [#2026-08-31-2321](#2026-08-31-2321-session-summary) |
 | 2026-08-31 | 20:48 | Implement Online Serving Layer (Part 4); Fix Artifact Loading | ✅✅✅✅ | [#2026-08-31-2048](#2026-08-31-2048-session-summary) |
@@ -853,3 +854,92 @@ Implement the `latency_ms` tracking dynamically inside `score()` and proceed to 
 ### Open Threads / Next Steps
 
 None. The architecture refactoring is complete, tested, and verified.
+
+---
+
+### <a name="2026-09-04-1822-session-summary"></a>[2026-09-04 18:22] Session Summary
+
+**Duration:** ~35 minutes
+
+**Overview:** This session focused on fixing GitHub Actions CI and Continuous Training (CT) workflow pipeline failures caused by the split requirements files, resolving sub-dependency version conflicts, strictly pinning all project dependencies for true MLOps reproducibility, and standardizing the Python runtime version to 3.12 across CI/CD workflows and Docker.
+
+**Goals:** 2 total — 2 done, 0 partial, 0 blocked
+
+---
+
+### Goal 1: CI/CT Workflow Dependency Resolution
+
+**Status:** ✅ Done
+
+**Context:** Following the split of `requirements.txt` into `requirements-serve.txt` and `requirements-train.txt`, both the CI (`ci.yml`) and CT (`train.yml`) GitHub Actions pipelines encountered failures. First, `actions/setup-python@v5` could not find `requirements.txt`. Second, when sequential `pip install` commands were run in CT, Prefect failed to import with `ImportError: cannot import name 'start_blocking_portal' from 'anyio'`. The user asked why both serving and training requirements were needed in both pipelines and why `anyio` was being upgraded.
+
+**Approach / Plan:** 
+1. Explain the dependency architecture: CI requires both files to run unit/integration tests across all modules (`test_api.py`, `test_data_validation.py`), while CT requires serving requirements because core ML libraries (`pandas`, `scikit-learn`, `xgboost`, `mlflow`) are located in `requirements-serve.txt`.
+2. Explain the transitive dependency behavior of pip: `fastapi` and `httpx` depend on `starlette`/`httpcore`, which require `anyio`. In sequential installation, pip upgraded `anyio` to 4.x because `requirements-serve.txt` lacked the `<4` bound present in `requirements-train.txt`.
+3. Combine the requirements installation into a single pip invocation (`pip install -r requirements-serve.txt -r requirements-train.txt`) so pip resolves dependencies simultaneously and respects all constraints.
+4. Update `cache-dependency-path` in `actions/setup-python` to `requirements-*.txt`.
+
+**Work Done:**
+- Updated `.github/workflows/ci.yml` to install dependencies in a single command with combined `-r` flags.
+- Updated `.github/workflows/train.yml` with the same unified `pip install` command.
+- Updated the pip cache dependency pattern to `requirements-*.txt`.
+- Provided detailed explanations in chat addressing the user's questions regarding CI/CT requirement sharing and sub-dependency resolution.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — AnyIO Incompatibility with Prefect 2.x**
+- **Problem:** `ImportError: cannot import name 'start_blocking_portal' from 'anyio'` when running `python -m src.training.flow` in CI/CT runners.
+- **Diagnosis:** Prefect 2.x relies on `anyio < 4.0.0`. Installing `requirements-serve.txt` in a separate `pip install` step triggered pip to upgrade `anyio` to `4.x` as a transitive requirement of `fastapi` / `httpx`.
+- **Solution:** Combined both requirements files into a single `pip install -r ... -r ...` command. Pip's dependency resolver evaluated both files together and pinned `anyio` within `<4`.
+- **Result:** Constraint conflict resolved; Prefect imports successfully.
+- **Root Cause / Lesson:** Sequential `pip install -r fileA` and `pip install -r fileB` run isolated resolution passes. Later commands can silently upgrade packages constrained in earlier commands. Always pass multiple requirement files to a single pip command.
+
+**Files Touched:**
+- `.github/workflows/ci.yml` — Combined pip install and updated cache pattern.
+- `.github/workflows/train.yml` — Combined pip install and updated cache pattern.
+
+**Outcome:** CI and CT pipelines correctly install all required modules without AnyIO dependency clashes.
+
+---
+
+### Goal 2: Strict Version Pinning & Python 3.12 Alignment
+
+**Status:** ✅ Done
+
+**Context:** The requirements files previously lacked exact version pins, with only a few upper bounds (`pandas<3`, `prefect<3`). The user requested fixing this to ensure reproducibility. After pinning versions using `pip freeze` from the active `.venv`, GitHub Actions failed on `scipy==1.18.1` with `No matching distribution found for scipy==1.18.1` because the CI runner was configured for Python 3.11, whereas `scipy 1.18.1` requires Python `>=3.12`.
+
+**Approach / Plan:**
+1. Pin all packages in `requirements-serve.txt` and `requirements-train.txt` using the exact versions installed in the project's verified `.venv`.
+2. Inspect the local Python version (`Python 3.12.10`) and diagnose the `scipy==1.18.1` mismatch.
+3. Standardize Python runtime to version `3.12` across `.github/workflows/ci.yml`, `.github/workflows/train.yml`, and `Dockerfile` (`python:3.12-slim`) to achieve complete environment parity between local development, Docker, and CI/CD.
+
+**Work Done:**
+- Pinned all dependencies in `requirements-serve.txt` and `requirements-train.txt` with exact version equality (`==`).
+- Updated `actions/setup-python@v5` in `ci.yml` to `python-version: '3.12'`.
+- Updated `actions/setup-python@v5` in `train.yml` to `python-version: '3.12'`.
+- Updated `Dockerfile` base image from `python:3.11-slim` to `python:3.12-slim`.
+
+**Problems Faced & Solutions:**
+
+**Problem 1 — Scipy Python Version Mismatch on CI Runner**
+- **Problem:** `ERROR: Could not find a version that satisfies the requirement scipy==1.18.1` during CI pip install.
+- **Diagnosis:** `scipy 1.18.1` was installed locally under Python 3.12, where `scipy >= 1.18` dropped Python 3.11 support. The CI runner was configured with Python 3.11, causing pip to reject the distribution.
+- **Solution:** Upgraded the CI/CT runner Python version to `3.12` and updated Dockerfile to `python:3.12-slim`.
+- **Result:** Pip on GitHub Actions resolves and installs `scipy==1.18.1` without error.
+- **Root Cause / Lesson:** Pinning requirements from a local environment must always be paired with aligning the base Python runtime in Dockerfiles and CI runners, as modern wheels frequently drop older Python minors.
+
+**Files Touched:**
+- `requirements-serve.txt` — Strictly pinned all package versions.
+- `requirements-train.txt` — Strictly pinned all package versions.
+- `.github/workflows/ci.yml` — Upgraded Python version to 3.12.
+- `.github/workflows/train.yml` — Upgraded Python version to 3.12.
+- `Dockerfile` — Upgraded base image to `python:3.12-slim`.
+
+**Outcome:** All dependencies are strictly pinned and runtime environments are fully synchronized on Python 3.12.
+
+---
+
+### Open Threads / Next Steps
+
+- Monitor GitHub Actions workflow run to ensure both CI (`test`) and CT (`train`) jobs complete green.
+

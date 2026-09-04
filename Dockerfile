@@ -1,5 +1,5 @@
 # Base image with Python and standard dependencies
-FROM python:3.11-slim as base
+FROM python:3.12-slim as base
 
 WORKDIR /app
 
