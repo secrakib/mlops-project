@@ -4,4 +4,4 @@ FROM prom/prometheus:v2.50.0
 COPY config/prometheus.yml /etc/prometheus/prometheus.yml.tmpl
 
 # Change the entrypoint to use sed for string replacement before starting Prometheus
-ENTRYPOINT ["/bin/sh", "-c", "sed -e \"s|\\${GRAFANA_CLOUD_URL}|$GRAFANA_CLOUD_URL|g\" -e \"s|\\${GRAFANA_CLOUD_USER}|$GRAFANA_CLOUD_USER|g\" -e \"s|\\${GRAFANA_CLOUD_API_KEY}|$GRAFANA_CLOUD_API_KEY|g\" /etc/prometheus/prometheus.yml.tmpl > /etc/prometheus/prometheus.yml && exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml"]
+ENTRYPOINT ["/bin/sh", "-c", "sed -e \"s|\\${API_TARGET}|$API_TARGET|g\" -e \"s|\\${PUSHGATEWAY_TARGET}|$PUSHGATEWAY_TARGET|g\" -e \"s|\\${GRAFANA_CLOUD_URL}|$GRAFANA_CLOUD_URL|g\" -e \"s|\\${GRAFANA_CLOUD_USER}|$GRAFANA_CLOUD_USER|g\" -e \"s|\\${GRAFANA_CLOUD_API_KEY}|$GRAFANA_CLOUD_API_KEY|g\" /etc/prometheus/prometheus.yml.tmpl > /etc/prometheus/prometheus.yml && exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml"]
