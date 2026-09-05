@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Config
 DATABASE_URL = os.environ.get("DATABASE_URL")
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
-PUSHGATEWAY_URL = os.environ.get("PUSHGATEWAY_URL", "http://pushgateway:9091")
+PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://localhost:9090")
+PUSHGATEWAY_URL = os.environ.get("PUSHGATEWAY_URL", "http://localhost:9091")
 MODEL_ALIAS = os.environ.get("MODEL_ALIAS", "Staging")
 MODEL_NAME = os.environ.get("MODEL_NAME", "credit-risk-model")
 
