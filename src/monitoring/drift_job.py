@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
 PUSHGATEWAY_URL = os.environ.get("PUSHGATEWAY_URL", "http://pushgateway:9091")
+MODEL_ALIAS = os.environ.get("MODEL_ALIAS", "Staging")
+MODEL_NAME = os.environ.get("MODEL_NAME", "credit-risk-model")
 
 def wait_for_services():
     """Wake-up loop for Render free-tier sleeping services."""
@@ -97,10 +99,11 @@ def run_drift_job():
         
     client = MlflowClient()
     try:
-        model_version = client.get_model_version_by_alias("credit-risk-model", "Staging")
+        logger.info(f"Fetching model version for '{MODEL_NAME}' with alias '{MODEL_ALIAS}'...")
+        model_version = client.get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
         artifact_path = client.download_artifacts(model_version.run_id, "baseline_probs.npy")
         expected_probs = np.load(artifact_path)
-        logger.info(f"Loaded expected_probs from MLflow run {model_version.run_id}. Size: {len(expected_probs)}")
+        logger.info(f"Loaded expected_probs from MLflow run {model_version.run_id} (alias: {MODEL_ALIAS}). Size: {len(expected_probs)}")
     except Exception as e:
         logger.error(f"Failed to load baseline_probs from MLflow: {e}")
         return

@@ -1,0 +1,41 @@
+name: Drift Monitoring Job
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_alias:
+        description: 'Model alias to evaluate for drift (e.g. Production or Staging)'
+        required: false
+        default: 'Production'
+        type: string
+
+jobs:
+  drift-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'requirements-*.txt'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-serve.txt -r requirements-train.txt
+
+      - name: Run Drift Job
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+          DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
+          PROMETHEUS_URL: ${{ secrets.PROMETHEUS_URL }}
+          PUSHGATEWAY_URL: ${{ secrets.PUSHGATEWAY_URL }}
+          MODEL_ALIAS: ${{ inputs.model_alias || 'Production' }}
+        run: |
+          python -m src.monitoring.drift_job
