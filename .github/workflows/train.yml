@@ -48,3 +48,13 @@ jobs:
           DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
         run: |
           python -m src.training.flow
+
+      - name: Run Model Sanity Checks on New Staging Model
+        env:
+          DAGSHUB_USER: ${{ secrets.DAGSHUB_USER }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+          DAGSHUB_REPO: ${{ secrets.DAGSHUB_REPO }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pytest tests/test_model_sanity.py
+
