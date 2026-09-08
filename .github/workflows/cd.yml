@@ -23,6 +23,7 @@ jobs:
         id: gatekeeper
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "Manual dispatch triggered. Authorizing deployment."

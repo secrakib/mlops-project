@@ -12,7 +12,7 @@ def train_logistic_regression(X_train: pd.DataFrame, y_train: pd.Series, preproc
     pipeline.fit(X_train, y_train)
     return pipeline
 
-def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series, param_grid: dict, preprocessor, n_iter: int = 8) -> Pipeline:
+def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series, param_grid: dict, preprocessor, n_iter: int = 4) -> Pipeline:
     """Trains an XGBoost model using RandomizedSearchCV for hyperparameter tuning over the Pipeline."""
     print(f"Training XGBoost with random search over grid: {param_grid}...")
     
