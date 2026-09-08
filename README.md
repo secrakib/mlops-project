@@ -190,7 +190,13 @@ The easiest way to spin up the entire ecosystem is using Docker Compose. It buil
    ```
 
 3. **Pull Data from DVC:**
+   DVC is configured to use DagsHub as the remote storage. The dataset and MLflow tracking are hosted at **[rakibullah60/mlops-project-dataset](https://dagshub.com/rakibullah60/mlops-project-dataset)**. You must authenticate using your `DAGSHUB_TOKEN` before pulling the data:
    ```bash
+   # Configure your local credentials
+   dvc remote modify origin --local access_key_id <YOUR_DAGSHUB_TOKEN>
+   dvc remote modify origin --local secret_access_key <YOUR_DAGSHUB_TOKEN>
+   
+   # Pull the dataset
    dvc pull
    ```
 
