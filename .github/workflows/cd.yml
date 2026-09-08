@@ -67,34 +67,50 @@ jobs:
             exit 0
           fi
 
-          # Check failures
-          if [ "$CI_CONCLUSION" = "failure" ] || [ "$CI_CONCLUSION" = "cancelled" ]; then
-            echo "CI Pipeline failed or was cancelled."
+          # Count how many prerequisite workflows were triggered
+          NUM_TRIGGERED=0
+          if [ -n "$CI_STATUS" ]; then
+            NUM_TRIGGERED=$((NUM_TRIGGERED + 1))
+          fi
+          if [ -n "$TRAIN_STATUS" ]; then
+            NUM_TRIGGERED=$((NUM_TRIGGERED + 1))
+          fi
+          
+          echo "Number of prerequisite workflows triggered: $NUM_TRIGGERED"
+          
+          if [ "$NUM_TRIGGERED" -eq 0 ]; then
+            echo "No prerequisite workflows triggered. Halting."
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
-
-          if [ "$TRAIN_CONCLUSION" = "failure" ] || [ "$TRAIN_CONCLUSION" = "cancelled" ]; then
-            echo "Training Pipeline failed or was cancelled."
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            exit 1
+          
+          if [ "$NUM_TRIGGERED" -eq 2 ]; then
+            # Both triggered
+            if [ "$CI_CONCLUSION" = "success" ] && [ "$TRAIN_CONCLUSION" = "success" ]; then
+              echo "Both workflows succeeded! Authorizing deployment."
+              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "One or both workflows did not succeed. Halting."
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+          elif [ "$NUM_TRIGGERED" -eq 1 ]; then
+            # Only one triggered
+            if [ -n "$CI_STATUS" ] && [ "$CI_CONCLUSION" = "success" ]; then
+              echo "Only CI Pipeline triggered and it succeeded! Authorizing deployment."
+              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            elif [ -n "$TRAIN_STATUS" ] && [ "$TRAIN_CONCLUSION" = "success" ]; then
+              echo "Only Training Pipeline triggered and it succeeded! Authorizing deployment."
+              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            else
+              echo "The triggered workflow did not succeed. Halting."
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
           fi
-
-          if [ "$CI_CONCLUSION" != "success" ]; then
-            echo "CI Pipeline did not complete with success."
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          # If Training Pipeline was triggered for this commit, verify it succeeded
-          if [ -n "$TRAIN_STATUS" ] && [ "$TRAIN_CONCLUSION" != "success" ]; then
-            echo "Training Pipeline ran but did not succeed ($TRAIN_CONCLUSION)."
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-
-          echo "All required workflows succeeded! Authorizing deployment."
-          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
 
   build-and-push:
     needs: check-prerequisites

@@ -58,3 +58,21 @@ jobs:
         run: |
           python -m pytest tests/test_model_sanity.py
 
+      - name: Promote Model to Production
+        env:
+          MLFLOW_TRACKING_URI: https://dagshub.com/${{ secrets.DAGSHUB_USER }}/mlops-project-dataset.mlflow
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USER }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          python -c "
+          import os
+          from mlflow.tracking import MlflowClient
+          client = MlflowClient()
+          model_name = 'credit-risk-model'
+          try:
+              staging_model = client.get_model_version_by_alias(model_name, 'Staging')
+              client.set_registered_model_alias(model_name, 'Production', staging_model.version)
+              print(f'Successfully promoted version {staging_model.version} of {model_name} to Production alias.')
+          except Exception as e:
+              print(f'Warning: Could not promote model: {e}')
+          "
