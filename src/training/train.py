@@ -7,12 +7,12 @@ from sklearn.pipeline import Pipeline
 def train_logistic_regression(X_train: pd.DataFrame, y_train: pd.Series, preprocessor) -> Pipeline:
     """Trains a baseline Logistic Regression model wrapped in a Pipeline."""
     print("Training LogisticRegression...")
-    model = LogisticRegression(class_weight='balanced', max_iter=2000)
+    model = LogisticRegression(class_weight='balanced', max_iter=1000)
     pipeline = Pipeline(steps=[('preprocessor', preprocessor), ('classifier', model)])
     pipeline.fit(X_train, y_train)
     return pipeline
 
-def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series, param_grid: dict, preprocessor, n_iter: int = 4) -> Pipeline:
+def train_xgboost(X_train: pd.DataFrame, y_train: pd.Series, param_grid: dict, preprocessor, n_iter: int = 8) -> Pipeline:
     """Trains an XGBoost model using RandomizedSearchCV for hyperparameter tuning over the Pipeline."""
     print(f"Training XGBoost with random search over grid: {param_grid}...")
     
