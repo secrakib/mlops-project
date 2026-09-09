@@ -12,6 +12,7 @@ Check out the active deployment for each component of the ecosystem:
 - ⚡ **API Service (FastAPI)**: [https://mlops-api-latest.onrender.com/](https://mlops-api-latest.onrender.com/)
 - 📈 **Prometheus Metrics**: [https://mlops-prometheus-npxn.onrender.com/](https://mlops-prometheus-npxn.onrender.com/)
 - 📥 **Pushgateway**: [https://mlops-pushgateway.onrender.com/](https://mlops-pushgateway.onrender.com/)
+- 📊 **Grafana Dashboard**: [https://mlopsproject.grafana.net/public-dashboards/4a81106634014e12a8e568d08725a4a8](https://mlopsproject.grafana.net/public-dashboards/4a81106634014e12a8e568d08725a4a8)
 
 ---
 
@@ -224,6 +225,6 @@ Observability is a core component of this MLOps system.
 - **FastAPI** generates inference logs, prediction distributions, and latency metrics.
 - **Pushgateway** acts as an intermediary, receiving short-lived metrics from the training and batch processes.
 - **Prometheus** scrapes the API and Pushgateway, storing time-series data.
-- **Grafana Cloud** (configured via `.env`) connects to Prometheus to visualize these metrics on dashboards and setup alerting for data drift.
+- **Grafana Cloud** (configured via `.env`) connects to Prometheus to visualize these metrics on dashboards and setup alerting for data drift (see the [Public Dashboard](https://mlopsproject.grafana.net/public-dashboards/4a81106634014e12a8e568d08725a4a8)).
 
 ---
