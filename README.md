@@ -135,9 +135,9 @@ DAGSHUB_TOKEN="your-dagshub-token"
 **Frontend (`frontend`)**
 ```ini
 DATABASE_URL="postgresql://<user>:<password>@<host>:<port>/<db>"
-API_URL="https://mlops-api-latest.onrender.com"          # or http://localhost:8000
-PROMETHEUS_URL="https://mlops-prometheus-npxn.onrender.com" # or http://localhost:9090
-PUSHGATEWAY_URL="https://mlops-pushgateway.onrender.com" # or http://localhost:9091
+API_URL="<your-api-url>"                  # e.g., https://your-api.onrender.com or http://localhost:8000
+PROMETHEUS_URL="<your-prometheus-url>"    # e.g., https://your-prometheus.onrender.com or http://localhost:9090
+PUSHGATEWAY_URL="<your-pushgateway-url>"  # e.g., https://your-pushgateway.onrender.com or http://localhost:9091
 ```
 
 **Data & MLflow Tracking (`train`, `sanity tests`)**
@@ -149,9 +149,9 @@ DAGSHUB_TOKEN="your-dagshub-token"
 
 **Observability & Monitoring (`prometheus`, `pushgateway`, `drift_job`)**
 ```ini
-# Scrape targets for Prometheus
-API_TARGET="mlops-api-latest.onrender.com"
-PUSHGATEWAY_TARGET="mlops-pushgateway.onrender.com"
+# Scrape targets for Prometheus (Domain/IP + Port only, no http://)
+API_TARGET="<your-api-target>"                 # e.g., your-api.onrender.com or api:8000
+PUSHGATEWAY_TARGET="<your-pushgateway-target>" # e.g., your-pushgateway.onrender.com or pushgateway:9091
 
 # Remote write to Grafana Cloud
 GRAFANA_CLOUD_URL="https://prometheus-prod...grafana.net/api/prom/push"
@@ -159,8 +159,8 @@ GRAFANA_CLOUD_USER="your-grafana-user-id"
 GRAFANA_CLOUD_API_KEY="your-grafana-api-key"
 
 # Used by drift detection job
-PROMETHEUS_URL="https://mlops-prometheus-npxn.onrender.com"
-PUSHGATEWAY_URL="https://mlops-pushgateway.onrender.com"
+PROMETHEUS_URL="<your-prometheus-url>"
+PUSHGATEWAY_URL="<your-pushgateway-url>"
 ```
 
 **CI/CD (Required in GitHub Secrets, optionally local)**
