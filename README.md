@@ -121,26 +121,46 @@ Before running the project locally or via Docker Compose, you must create a `.en
 
 ### Required Variables by Service
 
-**API & Frontend (`api`, `frontend`)**
+**API Backend (`api`)**
 ```ini
 ALLOWED_ORIGINS="*"
 MODEL_ALIAS="Production"
 DATABASE_URL="postgresql://<user>:<password>@<host>:<port>/<db>"
+# Required by API to load registered MLflow models from DagsHub
+DAGSHUB_USER="your-dagshub-user"
+DAGSHUB_REPO="your-dagshub-repo"
+DAGSHUB_TOKEN="your-dagshub-token"
 ```
 
-**Data & Tracking (DVC & MLflow/DagsHub integration)**
+**Frontend (`frontend`)**
+```ini
+DATABASE_URL="postgresql://<user>:<password>@<host>:<port>/<db>"
+API_URL="https://mlops-api-latest.onrender.com"          # or http://localhost:8000
+PROMETHEUS_URL="https://mlops-prometheus-npxn.onrender.com" # or http://localhost:9090
+PUSHGATEWAY_URL="https://mlops-pushgateway.onrender.com" # or http://localhost:9091
+```
+
+**Data & MLflow Tracking (`train`, `sanity tests`)**
 ```ini
 DAGSHUB_USER="your-dagshub-user"
 DAGSHUB_REPO="your-dagshub-repo"
 DAGSHUB_TOKEN="your-dagshub-token"
 ```
 
-**Monitoring (`prometheus`, `pushgateway`)**
+**Observability & Monitoring (`prometheus`, `pushgateway`, `drift_job`)**
 ```ini
-# For syncing metrics to Grafana Cloud
+# Scrape targets for Prometheus
+API_TARGET="mlops-api-latest.onrender.com"
+PUSHGATEWAY_TARGET="mlops-pushgateway.onrender.com"
+
+# Remote write to Grafana Cloud
 GRAFANA_CLOUD_URL="https://prometheus-prod...grafana.net/api/prom/push"
 GRAFANA_CLOUD_USER="your-grafana-user-id"
 GRAFANA_CLOUD_API_KEY="your-grafana-api-key"
+
+# Used by drift detection job
+PROMETHEUS_URL="https://mlops-prometheus-npxn.onrender.com"
+PUSHGATEWAY_URL="https://mlops-pushgateway.onrender.com"
 ```
 
 **CI/CD (Required in GitHub Secrets, optionally local)**
